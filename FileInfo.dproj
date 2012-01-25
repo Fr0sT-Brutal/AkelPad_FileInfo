@@ -93,13 +93,13 @@
 					</VersionInfo>
 					<VersionInfoKeys>
 						<VersionInfoKeys Name="CompanyName"/>
-						<VersionInfoKeys Name="FileDescription"/>
+						<VersionInfoKeys Name="FileDescription">AkelPad (x86) text editor plugin</VersionInfoKeys>
 						<VersionInfoKeys Name="FileVersion">0.0.1.0</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName"/>
 						<VersionInfoKeys Name="LegalCopyright">Fr0sT</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalTrademarks"/>
 						<VersionInfoKeys Name="OriginalFilename"/>
-						<VersionInfoKeys Name="ProductName">AkelPad (x86) text editor plugin</VersionInfoKeys>
+						<VersionInfoKeys Name="ProductName">FileInfo</VersionInfoKeys>
 						<VersionInfoKeys Name="ProductVersion">0.0.1.0</VersionInfoKeys>
 						<VersionInfoKeys Name="Comments"/>
 					</VersionInfoKeys>
