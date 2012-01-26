@@ -15,7 +15,7 @@ library FileInfo;
 {$R *.RES}
 
 uses
-  Windows, Messages, SysUtils, CommCtrl, ShellApi,
+  Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
   IceUtils, ResDialog,
   AkelDLL_h  in '#AkelDefs\AkelDLL_h.pas',
   AkelEdit_h in '#AkelDefs\AkelEdit_h.pas';
@@ -28,11 +28,16 @@ const
 type
   // statistics that are counted in the separate thread
   TDocCountStats = record
+    Actual: Boolean;           // Whether the values have their meaning (True if the count
+                               // process has finished normally or is running, False if
+                               // it was interrupted)
     Lines,                     // Without word wrap
     Chars,                     // Total chars
     CharsSpace,                // Spaces, tabs, etc
-    Words,
-    whatever: Int64;
+    Words,                     // words according to Akel settings
+    Surrogates,                // surrogate pairs
+    Latin,                     // latin letters
+    Letters: Int64;            // all letters
   end;
 
   // full set of file and document properties and stats
@@ -51,21 +56,51 @@ type
 
   // internal data and structures for counting
 
-  TCountState = (stNotStarted, stWords, stChars, stFinished);
-
-  TCountData = record
+  TCountData = record     {}
     hMainWnd, hEditWnd: HWND;                   // main window and edit window
-    crInit: TAECHARRANGE;                       //   data
-    crCount: TAECHARRANGE;                      //
-    ciWordStart: TAECHARINDEX;                  //         for
-    ciWordEnd: TAECHARINDEX;                    //
-    ciCount: TAECHARINDEX;                      //
-    isChars: TAEINDEXSUBTRACT;                  //            counting
-    Selection, Wrap, ColumnSel: Boolean;        // current document modes
-    CountState: TCountState;                    // what we're counting now
-    CharsProcessed: Int64;                      // how much chars have been already processed
+    Complete: Boolean;                          // True if count process is finished
   end;
   PCountData = ^TCountData;
+
+  // current counting state
+  TCountProgress = record
+    PercentDone: Cardinal;
+    Counters: TDocCountStats;
+  end;
+  PCountProgress = ^TCountProgress;
+
+  TCountCallback = procedure(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+
+  TThreadState = (stInactive, stRunning, stTerminated);
+
+  // counter thread
+  TCountThread = class
+  strict private
+    FhThread: THandle;
+    FidThread: DWORD;
+    FhTargetWnd: HWND;
+    FCountData: TCountData;
+    FState: TThreadState;
+  private
+    procedure CountCallback(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+    function Execute: DWORD;
+  public
+    procedure Run(TargetWnd: HWND; const CountData: TCountData);
+    procedure Stop;
+    procedure WaitFor;
+
+    property State: TThreadState read FState;
+  end;
+
+const
+  WordsPerCycle = 1000;  {}
+  CharsPerCycle = 2000;  {}
+
+  // Count thread -> main dialog window
+  //   wParam: TThreadState
+  //   lParam: pointer to TCountProgress record. CountProgress.PercentDone = 100
+  //           means the thread has finished normally
+  MSG_UPD_COUNT = WM_USER + $FF1;
 
 {$REGION 'Localization'}
 
@@ -181,22 +216,6 @@ end;
 {$I Dialog.inc}  // dialog IDs
 
 type
-  // current counting state
-  TCountProgress = record
-    PercentDone: Cardinal;
-    Counters: TDocCountStats;
-  end;
-  PCountProgress = ^TCountProgress;
-
-  // counter thread related data
-  TCountThreadData = record
-    hThread: THandle;
-    idThread: DWORD;
-    hTargetWnd: HWND;
-    Terminated: Boolean;
-    Running: Boolean;
-  end;
-
   // tab pages
   TTabPage = (tabFile, tabDoc);
 
@@ -226,31 +245,18 @@ type
   end;
 
 const
-  WordsPerCycle = 100;  {}
-  CharsPerCycle = 2000; {}
   TabPageIDs: array[TTabPage] of Integer =
     (IDD_INFO_FILE, IDD_INFO_DOC);
-
-  // Count thread -> main dialog window
-  //   wParam: thread state - TS_*
-  //   lParam: pointer to TCountProgress record
-  MSG_UPD_COUNT = WM_USER + $FF1;
-  // count thread states
-  TS_TERMINATED = DWORD(-1);
-  TS_FINISHED   =         0;
-  TS_ACTIVE     =         1;
 
 // Global variables
 
 var
   FileStats: TFileStats;
-  dlgMain: TMainDlg;
-  ThreadData: TCountThreadData; // ! this record is shared between main and counter threads !
-  CountData: TCountData;
+  MainDlg: TMainDlg;
+  CountThread: TCountThread;
+  CountData: TCountData;  {}
 
 // ***** SERVICE FUNCTIONS ***** \\
-
-// *** Functions that get file and document info ***
 
 // Retrieve file properties.
 function GetFileInfo(var CountData: TCountData; var FileStats: TFileStats): Boolean;
@@ -291,353 +297,408 @@ begin
 end;
 
 // Retrieve document properties.
+// ! Executes in the context of the counter thread !
 // Acts on the basis of CountData.CountState (and changes it when count stage is changing).
-// When counting, processes only a tiny part of the text allowing progress reporting and
-//   termination of the calling thread.
-procedure GetDocInfo(var CountData: TCountData; var CountProgress: TCountProgress);
-var line1, line2, WordCnt, CharCnt, tmp: Integer;
-    NotLineEnd: Boolean;
-    CurrChar: WideChar;
+procedure GetDocInfo(var CountData: TCountData; CountCallback: TCountCallback);
+var
+  line1, line2, WordCnt, CharCnt, tmp: Integer;
+  Selection, Wrap, ColumnSel: Boolean;  // current document modes
+  CountProgress: TCountProgress;
+  IsFirst, IsLast: Boolean;
+  CurrChar: WideChar;
+  crInit: TAECHARRANGE;
+  crCount: TAECHARRANGE;
+  ciWordStart: TAECHARINDEX;
+  ciWordEnd: TAECHARINDEX;
+  ciCount: TAECHARINDEX;
+  isChars: TAEINDEXSUBTRACT;
+  CharsProcessed: Int64;                // how much chars have been already processed
+
+// Launch the given callback function (if any).
+// Returns False if the process must be interrupted.
+// Uses external variables: CountCallback, CountData, CountProgress
+function RunCallback: Boolean;
 begin
-  case CountData.CountState of
-    // count not started or has been finished - get basic document info and start a new count
-    stNotStarted, stFinished:
+  Result := True;
+  if not Assigned(CountCallback) then Exit;
+  CountCallback(CountData, CountProgress, Result);
+end;
+
+// Recalculate current percent and launch callback
+// Uses external variables: CountData, CountProgress, CharsProcessed, WordCnt, CharCnt
+function ReportWordCount: Boolean;
+begin
+  // update the counters
+  Inc(CountProgress.Counters.Words, WordCnt);
+  Inc(CharsProcessed, CharCnt);
+  WordCnt := 0;
+  CharCnt := 0;
+  // still in progress - get current percent value
+  if CountProgress.PercentDone < 100 then
+  begin
+    CountProgress.PercentDone := Trunc(CharsProcessed*100/CountProgress.Counters.Chars);
+    if CountProgress.PercentDone > 99 then // we'll reach 100% only when AEM_GETNEXTBREAK return 0
+      CountProgress.PercentDone := 99;
+  end;
+  Result := RunCallback;
+end;
+
+// Recalculate current percent and launch callback
+// Uses external variables: CountData, CountProgress, CharsProcessed, WordCnt, CharCnt
+function ReportCharCount: Boolean;
+begin
+  // update the counters
+  Inc(CharsProcessed, CharCnt);
+  CharCnt := 0;
+  // still in progress - get current percent value
+  if CountProgress.PercentDone < 100 then
+  begin
+    CountProgress.PercentDone := Trunc(CharsProcessed*100/CountProgress.Counters.Chars);
+    if CountProgress.PercentDone > 99 then // we'll reach 100% only when AEM_GETNEXTBREAK return 0
+      CountProgress.PercentDone := 99;
+  end;
+  Result := RunCallback;
+end;
+
+begin
+  ZeroMem(CountProgress, SizeOf(CountProgress));
+  CountProgress.Counters.Actual := True;
+  CountData.Complete := False;
+
+  // *** get basic document info ***
+
+  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@crInit.ciMin));
+  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@crInit.ciMax));
+
+  // Check if there's selection and wrapping present
+  Selection := (AEC_IndexCompare(crInit.ciMin, crInit.ciMax) <> 0);
+  Wrap := SendMessage(CountData.hEditWnd, AEM_GETWORDWRAP, 0, LPARAM(nil)) <> 0;
+  ColumnSel := SendMessage(CountData.hEditWnd, AEM_GETCOLUMNSEL, 0, 0) <> 0;
+
+  // lines count
+  if not Selection then
+  begin
+    SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTCHAR, LPARAM(@crInit.ciMin));
+    SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTCHAR, LPARAM(@crInit.ciMax));
+  end;
+  line1 := crInit.ciMin.nLine;
+  line2 := crInit.ciMax.nLine;
+  if Wrap then
+  begin
+    line1 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line1), 0);
+    line2 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line2), 0);
+  end;
+  CountProgress.Counters.Lines := line2 - line1 + 1;
+
+  {}// selection present, if caret is on the 1st char - excess line
+
+  // total chars count
+  isChars.ciChar1 := @crInit.ciMax;
+  isChars.ciChar2 := @crInit.ciMin;
+  isChars.bColumnSel := BOOL(-1);
+  isChars.nNewLine := AELB_ASOUTPUT;
+  CountProgress.Counters.Chars := SendMessage(CountData.hEditWnd, AEM_INDEXSUBTRACT, 0, LPARAM(@isChars));
+
+  CountProgress.PercentDone := 100;
+  if not RunCallback then Exit;
+
+  // *** word count ***
+
+  // init data
+  CountProgress.PercentDone := 0;
+  CharsProcessed := 0;
+  WordCnt := 0; CharCnt := 0; // how much words/chars we've processed during current cycle
+
+  // there's no selection
+  if not Selection then
+  begin
+    ciCount := crInit.ciMin;
+
+    repeat
+      // returns number of characters skipped to the next word
+      tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciCount));
+
+      // EOF - finish the cycle
+      if tmp = 0 then
       begin
-        ZeroMem(CountProgress, SizeOf(CountProgress));
-
-        SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@CountData.crInit.ciMin));
-        SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@CountData.crInit.ciMax));
-
-        // Check if there's selection and wrapping present
-        CountData.Selection := (AEC_IndexCompare(CountData.crInit.ciMin, CountData.crInit.ciMax) <> 0);
-        CountData.Wrap := SendMessage(CountData.hEditWnd, AEM_GETWORDWRAP, 0, LPARAM(nil)) <> 0;
-        CountData.ColumnSel := SendMessage(CountData.hEditWnd, AEM_GETCOLUMNSEL, 0, 0) <> 0;
-
-        // lines count
-        if not CountData.Selection then
-        begin
-          SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTCHAR, LPARAM(@CountData.crInit.ciMin));
-          SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTCHAR, LPARAM(@CountData.crInit.ciMax));
-        end;
-        line1 := CountData.crInit.ciMin.nLine;
-        line2 := CountData.crInit.ciMax.nLine;
-        if CountData.Wrap then
-        begin
-          line1 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line1), 0);
-          line2 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line2), 0);
-        end;
-        CountProgress.Counters.Lines := line2 - line1 + 1;
-
-        {}// selection present, if caret is on the 1st char - excess line
-
-        // chars count
-        CountData.isChars.ciChar1 := @CountData.crInit.ciMax;
-        CountData.isChars.ciChar2 := @CountData.crInit.ciMin;
-        CountData.isChars.bColumnSel := BOOL(-1);
-        CountData.isChars.nNewLine := AELB_ASOUTPUT;
-        CountProgress.Counters.Chars := SendMessage(CountData.hEditWnd, AEM_INDEXSUBTRACT, 0, LPARAM(@CountData.isChars));
-
-        // init data for word count
-        CountProgress.PercentDone := 0;
-        CountData.CharsProcessed := 0;
-        if not CountData.Selection then
-          CountData.ciCount := CountData.crInit.ciMin
-        else
-        begin
-          CountData.crCount.ciMin := CountData.crInit.ciMin;
-          CountData.crCount.ciMax := CountData.crInit.ciMax;
-        end;
-ZeroMem(CountData.ciWordStart, SizeOf(CountData.ciWordStart));
-ZeroMem(CountData.ciWordEnd,   SizeOf(CountData.ciWordEnd));
-
-        // switch to the next count stage
-        CountData.CountState := stWords;
+        CountProgress.PercentDone := 100;
+        Break;
       end;
 
-    // words count
-    stWords:
-      if not CountData.Selection then
-      begin
-        WordCnt := 0; CharCnt := 0; // how much words/chars we've processed during current cycle
+      Inc(CharCnt, tmp);
+      Inc(WordCnt);
 
+      // check whether it is time to run callback (WordsPerCycle limit reached)
+      if WordCnt > WordsPerCycle then
+        if not ReportWordCount then Exit;
+    until False;
+
+    // final report
+    if not ReportWordCount then Exit;
+  end // if not Selection
+  // selection is present
+  else
+  begin
+    crCount.ciMin := crInit.ciMin;
+    crCount.ciMax := crInit.ciMax;
+    IsFirst := True;
+
+    if ColumnSel then
+    begin
+      repeat
+        // EOF - finish the cycle
+        if AEC_IndexCompare(crCount.ciMin, crCount.ciMax) >= 0 then
+        begin
+          CountProgress.PercentDone := 100;
+          Break;
+        end;
+
+        ciWordEnd := crCount.ciMin;
         repeat
           // returns number of characters skipped to the next word
-          tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@CountData.ciCount));
+          tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
           // EOF - finish the cycle
           if tmp = 0 then
           begin
             CountProgress.PercentDone := 100;
             Break;
           end;
-          Inc(CharCnt, tmp);
-          Inc(WordCnt);
-        until WordCnt > WordsPerCycle;
 
-        // still in progress - get current percent value
-        if CountProgress.PercentDone < 100 then
-        begin
-          Inc(CountProgress.Counters.Words, WordCnt);
-          Inc(CountData.CharsProcessed, CharCnt);
-          CountProgress.PercentDone := Trunc(CountData.CharsProcessed*100/CountProgress.Counters.Chars);
-          if CountProgress.PercentDone > 99 then // we'll reach 100% only when AEM_GETNEXTBREAK return 0
-            CountProgress.PercentDone := 99;
-        end
-        // word count finished, prepare data for the next stage and switch to it
-        else
-        begin
-        {}ZeroMem(CountData.crCount,     SizeOf(CountData.crCount));
-          CountData.ciCount := CountData.crInit.ciMin;
-          CountData.CharsProcessed := 0;
+          // word ends beyond the selection - finish the *inner* cycle
+          if not ((ciWordEnd.nLine = crCount.ciMin.nLine) and
+                  (ciWordEnd.nCharInLine <= crCount.ciMin.lpLine.nSelEnd)) then Break;
 
-          // switch to the next count stage
-          CountData.CountState := stChars;
-        end;
-      end
-      else
-        if CountData.ColumnSel then
-        begin
-          while (AEC_IndexCompare(CountData.crCount.ciMin, CountData.crCount.ciMax) < 0) do
+          if IsFirst then
           begin
-            CountData.ciWordEnd := CountData.crCount.ciMin;
-            repeat
-              // returns number of characters skipped to the next word
-              tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@CountData.ciWordEnd));
-              // EOF - finish the cycle
-              if tmp = 0 then
-              begin
-                CountProgress.PercentDone := 100;
-                Break;
-              end;
-
-              // word ends beyond the selection - finish the cycle
-              if not ((CountData.ciWordEnd.nLine = CountData.crCount.ciMin.nLine) and
-                      (CountData.ciWordEnd.nCharInLine <= CountData.crCount.ciMin.lpLine.nSelEnd)) then Break;
-        {
-              if not bFirst then
-                Inc(WordCnt)
-              else
-              begin
-                bFirst := False;
-                CountData.ciWordStart := CountData.ciWordEnd;
-                if SendMessage(CountData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@CountData.ciWordStart)) <> 0 then
-                  if AEC_IndexCompare(CountData.crCount.ciMin, CountData.ciWordStart) <= 0 then
-                    Inc(WordCnt);
-              end;
-        }
-              // word ends on the end of selection - finish the cycle (?)
-              if CountData.ciWordEnd.nCharInLine = CountData.crCount.ciMin.lpLine.nSelEnd then
-                Break;
-
-              Inc(CharCnt, tmp);
-            until WordCnt > WordsPerCycle; {}//
-
-            //Next line
-       {     bFirst := True;
-            if AEC_NextLine(CountData.crCount.ciMin) then
-              CountData.crCount.ciMin.nCharInLine := CountData.crCount.ciMin.lpLine.nSelStart;
-       }   end;
-        end
-        else
-        begin
-          repeat
-            CountData.ciWordEnd := CountData.crCount.ciMin;
-            // returns number of characters skipped to the next word
-            tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@CountData.ciWordEnd));
-            // EOF - finish the cycle
-            if tmp = 0 then
-            begin
-              CountProgress.PercentDone := 100;
-              Break;
-            end;
-
-
-          until WordCnt > WordsPerCycle;
-
-(*
-
-          for (;;)
-          {
-
-            if (AEC_IndexCompare(&ciWordEnd, &crCount.ciMax) <= 0)
-            {
-              if (bFirst)
-              {
-                bFirst=FALSE;
-                ciWordStart=ciWordEnd;
-
-                if (SendMessage(hWndEdit, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, (LPARAM)&ciWordStart))
-                  if (AEC_IndexCompare(&crCount.ciMin, &ciWordStart) <= 0)
-                    ++nWordCount;
-              }
-              else ++nWordCount;
-
-              if (AEC_IndexCompare(&ciWordEnd, &crCount.ciMax) == 0)
-                break;
-            }
-            else break;
-
-            //Next word
-            crCount.ciMin=ciWordEnd;
-          }
-
-
-*)
-        end;
-
-    // chars count
-    stChars:
-      begin
-        CharCnt := 0; // how much chars we've processed during current cycle
-
-        repeat
-          // EOF - finish the cycle
-          if AEC_IndexCompare(CountData.ciCount, CountData.crInit.ciMax) >= 0 then
-          begin
-            CountProgress.PercentDone := 100;
-            Break;
-          end;
-
-          AEC_NextChar(CountData.ciCount);
-          Inc(CharCnt);
-
-          if CountData.Selection then
-            if CountData.ciCount.nCharInLine < CountData.ciCount.lpLine.nSelStart then
-              CountData.ciCount.nCharInLine := CountData.ciCount.lpLine.nSelStart;
-
-          if not CountData.Selection
-            then NotLineEnd := (CountData.ciCount.nCharInLine < CountData.ciCount.lpLine.nLineLen)
-            else NotLineEnd := (CountData.ciCount.nCharInLine < CountData.ciCount.lpLine.nLineLen) and
-                         (CountData.ciCount.nCharInLine < CountData.ciCount.lpLine.nSelEnd);
-
-          if NotLineEnd then
-          begin
-            //if AEC_IndexLen(CountData.ciCount) = 1 then
-            CurrChar := CountData.ciCount.lpLine.wpLine[CountData.ciCount.nCharInLine];
-            case CurrChar of
-              #$0009, ' ': Inc(CountProgress.Counters.CharsSpace);
-              {}//...
-            end;
-
+            IsFirst := False;
+            ciWordStart := ciWordEnd;
+            if SendMessage(CountData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@ciWordStart)) <> 0 then
+              if AEC_IndexCompare(crCount.ciMin, ciWordStart) <= 0 then
+                Inc(WordCnt);
           end
           else
-          begin
-            {if (ciCount.lpLine->nLineBreak == AELB_R || ciCount.lpLine->nLineBreak == AELB_N)
-              ++nCharLatinOther;
-            else if (ciCount.lpLine->nLineBreak == AELB_RN)
-              nCharLatinOther+=2;
-            else if (ciCount.lpLine->nLineBreak == AELB_RRN)
-              nCharLatinOther+=3;
-            }
-            AEC_NextLine(CountData.ciCount);
-          end;
+            Inc(WordCnt);
 
-        until CharCnt > CharsPerCycle;
+          Inc(CharCnt, tmp);
 
-        // still in progress - get current percent value
-        if CountProgress.PercentDone < 100 then
+          // word ends on the end of selection - finish the *inner* cycle (?)
+          if ciWordEnd.nCharInLine = crCount.ciMin.lpLine.nSelEnd then
+            Break;
+
+          // check whether it is time to run callback (WordsPerCycle limit reached)
+          if WordCnt > WordsPerCycle then
+            if not ReportWordCount then Exit;
+        until False;
+
+        //Next line
+        IsFirst := True;
+        if AEC_NextLine(crCount.ciMin) <> nil then
+          crCount.ciMin.nCharInLine := crCount.ciMin.lpLine.nSelStart;
+
+        // check whether it is time to run callback (WordsPerCycle limit reached)
+        if WordCnt > WordsPerCycle then
+          if not ReportWordCount then Exit;
+      until False;
+
+      // final report
+      if not ReportWordCount then Exit;
+    end // if ColumnSel
+    else
+    begin
+      repeat
+        ciWordEnd := crCount.ciMin;
+        // returns number of characters skipped to the next word
+        tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
+        // EOF - finish the cycle
+        if (tmp = 0) or (AEC_IndexCompare(ciWordEnd, crCount.ciMax) > 0) then
         begin
-          Inc(CountData.CharsProcessed, CharCnt);
-          CountProgress.PercentDone := Trunc(CountData.CharsProcessed*100/CountProgress.Counters.Chars);
-          if CountProgress.PercentDone > 99 then // we'll reach 100% only when read all the file/selection
-            CountProgress.PercentDone := 99;
-        end
-        // char count finished, prepare data for the next stage and switch to it
-        else
-        begin
-          // switch to the next count stage
-          CountData.CountState := stFinished;
+          CountProgress.PercentDone := 100;
+          Break;
         end;
 
+        if IsFirst then
+        begin
+          IsFirst := False;
+          ciWordStart := ciWordEnd;
+          if SendMessage(CountData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@ciWordStart)) <> 0 then
+            if AEC_IndexCompare(crCount.ciMin, ciWordStart) <= 0 then
+              Inc(WordCnt);
+        end
+        else
+          Inc(WordCnt);
 
+        if AEC_IndexCompare(ciWordEnd, crCount.ciMax) = 0 then
+        begin
+          CountProgress.PercentDone := 100;
+          Break;
+        end;
 
-        (*
-          {
-            if (AEC_IndexLen(&ciCount) == 1)
-            {
-              if (ciCount.lpLine->wpLine[ciCount.nCharInLine] <= 0x80)
-              {
-                if (ciCount.lpLine->wpLine[ciCount.nCharInLine] == L' ' ||
-                    ciCount.lpLine->wpLine[ciCount.nCharInLine] == L'\t')
-                {
-                  ++nCharLatinSpaces;
-                }
-                else if ((ciCount.lpLine->wpLine[ciCount.nCharInLine] >= L'A' &&
-                          ciCount.lpLine->wpLine[ciCount.nCharInLine] <= L'Z') ||
-                         (ciCount.lpLine->wpLine[ciCount.nCharInLine] >= L'a' &&
-                          ciCount.lpLine->wpLine[ciCount.nCharInLine] <= L'z'))
-                {
-                  ++nCharLatinLetters;
-                }
-                else if (ciCount.lpLine->wpLine[ciCount.nCharInLine] >= L'0' &&
-                         ciCount.lpLine->wpLine[ciCount.nCharInLine] <= L'9')
-                {
-                  ++nCharLatinDigits;
-                }
-                else ++nCharLatinOther;
-              }
-              else ++nCharNonLatin;
-            }
-            else ++nCharSurrogate;
-          }
-        *)
+        //Next word
+        crCount.ciMin := ciWordEnd;
+
+        // check whether it is time to run callback (WordsPerCycle limit reached)
+        if WordCnt > WordsPerCycle then
+          if not ReportWordCount then Exit;
+      until False;
+
+      // final report
+      if not ReportWordCount then Exit;
+    end;
+  end; // if Selection
+
+  // *** char count ***
+
+  // init data
+  ciCount := crInit.ciMin;
+  CountProgress.PercentDone := 0;
+  CharsProcessed := 0;
+  CharCnt := 0; // how much words/chars we've processed during current cycle
+
+  repeat
+    // EOF - finish the cycle
+    if AEC_IndexCompare(ciCount, crInit.ciMax) >= 0 then
+    begin
+      CountProgress.PercentDone := 100;
+      Break;
+    end;
+
+    if Selection then
+      if ciCount.nCharInLine < ciCount.lpLine.nSelStart then
+        ciCount.nCharInLine := ciCount.lpLine.nSelStart;
+
+    if not Selection
+      then IsLast := not  (ciCount.nCharInLine < ciCount.lpLine.nLineLen)
+      else IsLast := not ((ciCount.nCharInLine < ciCount.lpLine.nLineLen) and
+                          (ciCount.nCharInLine < ciCount.lpLine.nSelEnd));
+
+    if not IsLast then
+    begin
+      if AEC_IndexLen(ciCount) = 1 then  // wide char
+      begin
+        CurrChar := ciCount.lpLine.wpLine[ciCount.nCharInLine];
+        if TCharacter.IsWhiteSpace(CurrChar) then
+          Inc(CountProgress.Counters.CharsSpace)
+        else
+        if CharInSet(CurrChar, ['A'..'Z', 'a'..'z']) then
+          Inc(CountProgress.Counters.Latin)
+        else
+        if TCharacter.IsLetter(CurrChar) then
+          Inc(CountProgress.Counters.Letters);
+        //...
+      end
+      else                               // surrogate pair
+      begin
+        Inc(CountProgress.Counters.Surrogates);
+        //... check for letters ...
       end;
-  end;
+    end
+    else
+    begin
+      {
+      if (ciCount.lpLine->nLineBreak == AELB_R || ciCount.lpLine->nLineBreak == AELB_N)
+        ++nCharLatinOther;
+      else if (ciCount.lpLine->nLineBreak == AELB_RN)
+        nCharLatinOther+=2;
+      else if (ciCount.lpLine->nLineBreak == AELB_RRN)
+        nCharLatinOther+=3;
+      }
+      AEC_NextLine(ciCount);
+    end;
+
+    Inc(CharCnt);
+    AEC_NextChar(ciCount);
+
+    // check whether it is time to run callback (WordsPerCycle limit reached)
+    if CharCnt > CharsPerCycle then
+      if not ReportCharCount then Exit;
+  until False;
+
+  // all the counts are finished
+  CountData.Complete := True;
+  ReportCharCount;
 end;
 
-// *** Thread functions ***
+// *** COUNTING THREAD ***
 
-// Main procedure of the counter thread
+// Broker function allowing to use class method in the API calls
+// lParameter = TCountThread object
 function ThreadProc(lParameter: Pointer): DWORD; stdcall;
-var
-  CountProgress: TCountProgress;
-  CntData: TCountData;
-  PrevPercent: Byte;
 begin
-  CntData := PCountData(lParameter)^;
-  ThreadData.Running := True;
-  PrevPercent := 0;
+  Result := TCountThread(lParameter).Execute;
+end;
 
-  // thread cycle
-  while not ThreadData.Terminated do
+// broker function allowing to use class method as the GetDocInfo callback
+procedure CountCallbackProc(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+begin
+  CountThread.CountCallback(CountData, CountProgress, Continue);
+end;
+
+// counting thread methods
+
+procedure TCountThread.CountCallback(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+begin
+  if FState = stTerminated then
   begin
-    GetDocInfo(CntData, CountProgress);
-    // signal the main window about increased percent
-    if PrevPercent <> CountProgress.PercentDone then
-    begin
-      SendMessage(ThreadData.hTargetWnd, MSG_UPD_COUNT, TS_ACTIVE, LPARAM(@CountProgress));
-      PrevPercent := CountProgress.PercentDone;
-    end;
-    // counting finished
-    if CntData.CountState = stFinished then Break;
+    // Send final count state
+    CountProgress.Counters.Actual := False;
+    SendMessage(FhTargetWnd, MSG_UPD_COUNT, WPARAM(FState), LPARAM(@CountProgress));
+    Continue := False;
+    Exit;
   end;
 
-  // if exiting normally, return "OK", error otherwise
-  Result := IfTh(ThreadData.Terminated, TS_TERMINATED, TS_FINISHED);
-  // Send final count state
-  SendMessage(ThreadData.hTargetWnd, MSG_UPD_COUNT, Result, LPARAM(@CountProgress));
-  // clear the data
-  CloseHandle(ThreadData.hThread);
-  ZeroMem(ThreadData, SizeOf(ThreadData));
+  // change the thread state if count process is completed
+  if CountData.Complete then
+    FState := stInactive;
+
+  // send current counters and thread state to the main window
+  SendMessage(FhTargetWnd, MSG_UPD_COUNT, WPARAM(FState), LPARAM(@CountProgress));
+
+  Continue := True;
 end;
 
 // Launch the counting thread
-procedure StartCountThread(TargetWnd: HWND; const CntData: TCountData);
+procedure TCountThread.Run(TargetWnd: HWND; const CountData: TCountData);
 begin
-  if ThreadData.Running then Exit;
-  ZeroMem(ThreadData, SizeOf(ThreadData));
-  ZeroMem(FileStats.Counters, SizeOf(FileStats.Counters));
-  ThreadData.hTargetWnd := TargetWnd;
-  ThreadData.hThread := CreateThread(nil, 0, @ThreadProc, @CntData, 0, ThreadData.idThread);
-  {}//SetThreadPriority
+  if FState = stRunning then Exit;
+  FCountData := CountData;
+  FhTargetWnd := TargetWnd;
+  FhThread := CreateThread(nil, 0, @ThreadProc, Self, 0, FidThread);
+  SetThreadPriority(FhThread, THREAD_PRIORITY_BELOW_NORMAL);
 end;
 
-// Stop the counting thread (doesn't wait for it, thread could run for some time
+// Stop the counting thread (do not wait for it, thread could run for some time
 // after this procedure is finished!)
-procedure StopCountThread;
+procedure TCountThread.Stop;
 begin
-  if not ThreadData.Running then Exit;
-  ThreadData.Terminated := True;
+  if FState <> stRunning then Exit;
+  FState := stTerminated;
 end;
+
+procedure TCountThread.WaitFor;
+begin
+  WaitForSingleObject(FhThread, INFINITE);
+end;
+
+// Main procedure
+function TCountThread.Execute: DWORD;
+begin
+  FState := stRunning;
+
+  // thread cycle
+  GetDocInfo(FCountData, CountCallbackProc);
+
+  // if exiting normally, return "OK", otherwise return error
+  Result := IfTh(FState = stTerminated, DWORD(-1), 0);
+
+  // clear the data
+  CloseAndZeroHandle(FhThread);
+  FidThread := 0;
+  FhTargetWnd := 0;
+  FState := stInactive;
+  ZeroMem(FCountData, SizeOf(FCountData));
+end;
+
+// ***** DIALOGS ***** \\
 
 // TMainDlg
 
@@ -673,7 +734,7 @@ var hwndTab, hwndPb: HWND;
     pg: TTabPage;
     tabItem: TTCItem;
     NotifyHdr: TNMHdr;
-    progr: TCountProgress;
+    pProgr: PCountProgress;
 begin
   case msg of
     // dialog created and is going to be shown
@@ -701,13 +762,13 @@ begin
         SendMessage(DlgHwnd, WM_NOTIFY, 0, Windows.LPARAM(@NotifyHdr));
 
         FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
-        StartCountThread(DlgHwnd, CountData); // start counting
+        CountThread.Run(DlgHwnd, CountData); // start counting
       end;
 
     // dialog is closing - stop the thread
     RDM_DLGCLOSING:
       begin
-        StopCountThread;
+        CountThread.Stop;
       end;
 
     // tab page changes
@@ -740,10 +801,10 @@ begin
     // message from counting thread - update progress
     MSG_UPD_COUNT:
       begin
-        progr := PCountProgress(lParam)^;
-        FileStats.Counters := progr.Counters;
+        pProgr := PCountProgress(lParam);
+        FileStats.Counters := pProgr.Counters;
         // thread is not active, change button caption
-        if wParam <> TS_ACTIVE then
+        if TThreadState(wParam) <> stRunning then
           FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
 
         // change values on the doc page only if it is visible
@@ -751,10 +812,10 @@ begin
         FPages[tabDoc].SetValues;
         hwndPb := GetDlgItem(FPages[tabDoc].DlgHwnd, IDC_PGB_PROCESS);
         // return progress bar to zero if thread is not active
-        if (progr.PercentDone >= 100) or (wParam <> TS_ACTIVE) then
+        if TThreadState(wParam) <> stRunning then
           SendMessage(hwndPb, PBM_SETPOS, 0, 0)
         else
-          SendMessage(hwndPb, PBM_SETPOS, progr.PercentDone, 0);
+          SendMessage(hwndPb, PBM_SETPOS, pProgr.PercentDone, 0);
 
         Res := LRESULT(True);
       end;
@@ -835,11 +896,11 @@ begin
           FValuesWereSet := True;
         end;
         // update these values always
-        ItemText[IDC_EDT_LINES]     := ThousandsDivide(FileStats.Counters.Lines);
-        ItemText[IDC_EDT_CHARS]     := ThousandsDivide(FileStats.Counters.Chars);
-        ItemText[IDC_EDT_CHARSNOSP] := ThousandsDivide(FileStats.Counters.Chars - FileStats.Counters.CharsSpace);
-        ItemText[IDC_EDT_WORDS]     := ThousandsDivide(FileStats.Counters.Words);
-        ItemText[IDC_EDT_SMTH]      := ThousandsDivide(FileStats.Counters.whatever);
+        ItemText[IDC_EDT_LINES]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Lines));
+        ItemText[IDC_EDT_CHARS]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars));
+        ItemText[IDC_EDT_CHARSNOSP] := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars - FileStats.Counters.CharsSpace));
+        ItemText[IDC_EDT_WORDS]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Words));
+//        ItemText[IDC_EDT_SMTH]      := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.whatever));
       end;
   end;
 
@@ -875,15 +936,17 @@ begin
           case LOWORD(wParam) of
             // start/stop counting button
             IDC_BTN_STOP:
-              if ThreadData.Running then
+              if CountThread.State = stRunning then
               begin
-                StopCountThread;  {}// clear counters and set them
+                CountThread.Stop;
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
                 Res := LRESULT(True);
               end
               else
               begin
-                StartCountThread(FOwner.DlgHwnd, CountData); {}// clear counters and set them
+                FileStats.Counters.Actual := False;
+                SetValues;
+                CountThread.Run(FOwner.DlgHwnd, CountData);
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
                 Res := LRESULT(True);
               end;
@@ -898,9 +961,14 @@ end;
 procedure Init(var pd: TPLUGINDATA);
 begin
   CurrLangId := PRIMARYLANGID(pd.wLangModule);
+  ZeroMem(CountData, SizeOf(CountData));
+  CountData.hMainWnd := pd.hMainWnd;
+  CountData.hEditWnd := pd.hWndEdit;
 
-  dlgMain := TMainDlg.Create(pd);
-  dlgMain.Persistent := True;
+  MainDlg := TMainDlg.Create(pd);
+  MainDlg.Persistent := True;
+
+  CountThread := TCountThread.Create;
 
   //...
 end;
@@ -908,17 +976,13 @@ end;
 // do main work here
 procedure Execute(var pd: TPLUGINDATA);
 begin
-  ZeroMem(CountData, SizeOf(CountData));
-  CountData.hMainWnd := pd.hMainWnd;
-  CountData.hEditWnd := pd.hWndEdit;
-
   if not GetFileInfo(CountData, FileStats) then
   begin
     MsgBox(LangString(idMsgGetPropsFail), iStop);
     Exit;
   end;
 
-  if dlgMain.ShowModal = -1 then
+  if MainDlg.ShowModal = -1 then
   begin
     MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
     Exit;
@@ -928,8 +992,10 @@ end;
 // cleanup
 procedure Finish;
 begin
+  CountThread.WaitFor;
+  FreeAndNil(CountThread);
   DestroyIcon(FileStats.hIcon);
-  FreeAndNil(dlgMain);
+  FreeAndNil(MainDlg);
 end;
 
 // Identification
@@ -978,4 +1044,6 @@ exports
 begin
   DllProc := @CustomDllProc;
   CustomDllProc(DLL_PROCESS_ATTACH);
+  IsMultiThread := True; // ! we create thread not with TThread so we have to set this flag
+                         // manually to avoid troubles with memory manager
 end.
