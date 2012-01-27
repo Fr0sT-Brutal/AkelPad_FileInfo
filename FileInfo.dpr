@@ -9,15 +9,32 @@
 
 *****************************************)
 
+{
+ TO DO:
+   * launch parameters
+   * buttons for Browse, Copy path, Open in assoc program
+   * Default icon when - ?
+   * not a file (selection) - ?
+   * empty file - 1 line
+
+}
+
 library FileInfo;
 
-{$R 'Dialog.res' 'Dialog.rc'}
 {$R *.RES}
+{$R 'Dialog.res' 'Dialog.rc'}
+{$R 'Icon.res'}
 
 uses
-  Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
-  IceUtils, ResDialog,
-  AkelDLL_h  in '#AkelDefs\AkelDLL_h.pas',
+  Windows,
+  Messages,
+  SysUtils,
+  Character,
+  CommCtrl,
+  ShellApi,
+  IceUtils,
+  ResDialog,
+  AkelDLL_h in '#AkelDefs\AkelDLL_h.pas',
   AkelEdit_h in '#AkelDefs\AkelEdit_h.pas';
 
 // Global constants
@@ -33,11 +50,12 @@ type
                                // it was interrupted)
     Lines,                     // Without word wrap
     Chars,                     // Total chars
-    CharsSpace,                // Spaces, tabs, etc
     Words,                     // words according to Akel settings
-    Surrogates,                // surrogate pairs
+    WhiteSpaces,               // Spaces, tabs, etc
     Latin,                     // latin letters
-    Letters: Int64;            // all letters
+    Letters,                   // all letters
+    Surrogates                 // surrogate pairs
+      : Int64;
   end;
 
   // full set of file and document properties and stats
@@ -57,8 +75,8 @@ type
   // internal data and structures for counting
 
   TCountData = record     {}
-    hMainWnd, hEditWnd: HWND;                   // main window and edit window
-    Complete: Boolean;                          // True if count process is finished
+    hMainWnd, hEditWnd: HWND;  // main window and edit window
+    Complete: Boolean;         // True if count process is finished
   end;
   PCountData = ^TCountData;
 
@@ -87,14 +105,13 @@ type
   public
     procedure Run(TargetWnd: HWND; const CountData: TCountData);
     procedure Stop;
-    procedure WaitFor;
 
     property State: TThreadState read FState;
   end;
 
 const
   WordsPerCycle = 1000;  {}
-  CharsPerCycle = 2000;  {}
+  CharsPerCycle = 5000;  {}
 
   // Count thread -> main dialog window
   //   wParam: TThreadState
@@ -117,12 +134,15 @@ type
     idPgFileLabelSize,
     idPgFileLabelCreated,
     idPgFileLabelModified,
+    idPgFileTextSizePatt,
     idPgDocLabelCodePage,
     idPgDocLabelLines,
     idPgDocLabelChars,
     idPgDocLabelWords,
     idPgDocLabelCharsNoSp,
-    idPgDocLabelSmth,
+    idPgDocLabelLatin,
+    idPgDocLabelLetters,
+    idPgDocLabelSurr,
     idPgDocBtnCount,
     idPgDocBtnAbort,
     idMainBtnOK,
@@ -153,12 +173,15 @@ const
         'Размер',
         'Создан',
         'Изменён',
+        '%s байт',
         'Кодировка',
         'Строки',
         'Символы',
         'Слова',
         'Символы без пробелов',
-        'Что-то',
+        'Латинские буквы',
+        'Буквы',
+        'Суррогатные пары',
         'Подсчитать',
         'Прервать',
         'ОК',
@@ -179,12 +202,15 @@ const
         'Size',
         'Created',
         'Modified',
+        '%s byte(s)',
         'Codepage',
         'Lines',
         'Chars',
         'Words',
         'Chars without spaces',
-        'Smth',
+        'Latin letters',
+        'Letters',
+        'Surrogate pairs',
         'Count',
         'Abort',
         'OK',
@@ -317,6 +343,7 @@ var
 // Launch the given callback function (if any).
 // Returns False if the process must be interrupted.
 // Uses external variables: CountCallback, CountData, CountProgress
+// Based on the Stats plugin code by Instructor
 function RunCallback: Boolean;
 begin
   Result := True;
@@ -577,7 +604,7 @@ begin
       begin
         CurrChar := ciCount.lpLine.wpLine[ciCount.nCharInLine];
         if TCharacter.IsWhiteSpace(CurrChar) then
-          Inc(CountProgress.Counters.CharsSpace)
+          Inc(CountProgress.Counters.WhiteSpaces)
         else
         if CharInSet(CurrChar, ['A'..'Z', 'a'..'z']) then
           Inc(CountProgress.Counters.Latin)
@@ -613,6 +640,7 @@ begin
       if not ReportCharCount then Exit;
   until False;
 
+  Inc(CountProgress.Counters.Letters, CountProgress.Counters.Latin);
   // all the counts are finished
   CountData.Complete := True;
   ReportCharCount;
@@ -672,11 +700,6 @@ procedure TCountThread.Stop;
 begin
   if FState <> stRunning then Exit;
   FState := stTerminated;
-end;
-
-procedure TCountThread.WaitFor;
-begin
-  WaitForSingleObject(FhThread, INFINITE);
 end;
 
 // Main procedure
@@ -742,7 +765,7 @@ begin
       begin
         SendMessage(DlgHwnd, WM_SETICON, ICON_SMALL, Windows.LPARAM(FAppIcon));
 
-        hwndTab := GetDlgItem(DlgHwnd, IDC_TAB);
+        hwndTab := Item[IDC_TAB];
         // init tabs
         for pg := Low(TTabPage) to High(TTabPage) do
         begin
@@ -779,7 +802,7 @@ begin
           // page is about to change, hide the current page
           TCN_SELCHANGING:
             begin
-              hwndTab := GetDlgItem(DlgHwnd, NotifyHdr.idFrom);
+              hwndTab := Item[NotifyHdr.idFrom];
               pg := TTabPage(SendMessage(hwndTab, TCM_GETCURSEL, 0, 0));
               if not FPages[pg].Show(SW_HIDE) then
                 MsgBox(LastErrMsg);
@@ -788,7 +811,7 @@ begin
           // page was changed, show the current page
           TCN_SELCHANGE:
             begin
-              hwndTab := GetDlgItem(DlgHwnd, NotifyHdr.idFrom);
+              hwndTab := Item[NotifyHdr.idFrom];
               pg := TTabPage(SendMessage(hwndTab, TCM_GETCURSEL, 0, 0));
               if not FPages[pg].Show(SW_NORMAL) then
                 MsgBox(LastErrMsg);
@@ -810,7 +833,7 @@ begin
         // change values on the doc page only if it is visible
         if not IsWindowVisible(FPages[tabDoc].DlgHwnd) then Exit;
         FPages[tabDoc].SetValues;
-        hwndPb := GetDlgItem(FPages[tabDoc].DlgHwnd, IDC_PGB_PROCESS);
+        hwndPb := FPages[tabDoc].Item[IDC_PGB_PROCESS];
         // return progress bar to zero if thread is not active
         if TThreadState(wParam) <> stRunning then
           SendMessage(hwndPb, PBM_SETPOS, 0, 0)
@@ -856,7 +879,9 @@ begin
               ItemData(IDC_STC_CHARS,     LangString(idPgDocLabelChars)),
               ItemData(IDC_STC_WORDS,     LangString(idPgDocLabelWords)),
               ItemData(IDC_STC_CHARSNOSP, LangString(idPgDocLabelCharsNoSp)),
-              ItemData(IDC_STC_SMTH,      LangString(idPgDocLabelSmth)),
+              ItemData(IDC_STC_LATIN,     LangString(idPgDocLabelLatin)),
+              ItemData(IDC_STC_LETTERS,   LangString(idPgDocLabelLetters)),
+              ItemData(IDC_STC_SURR,      LangString(idPgDocLabelSurr)),
               ItemData(IDC_BTN_STOP,      LangString(idPgDocBtnCount)),
 
               ItemData(IDC_EDT_CODEPAGE,  ''),
@@ -864,14 +889,16 @@ begin
               ItemData(IDC_EDT_CHARS,     ''),
               ItemData(IDC_EDT_WORDS,     ''),
               ItemData(IDC_EDT_CHARSNOSP, ''),
-              ItemData(IDC_EDT_CHARS,     '')
+              ItemData(IDC_EDT_LATIN,     ''),
+              ItemData(IDC_EDT_LETTERS,   ''),
+              ItemData(IDC_EDT_SURR,      '')
              ]);
   end;
 end;
 
 // set text values form FileStats record
 procedure TPageDlg.SetValues;
-var hwndItem: HWND;
+//var hwndItem: HWND;
 begin
   case FPage of
     tabFile:
@@ -879,12 +906,11 @@ begin
       begin
         ItemText[IDC_EDT_FILENAME] := ExtractFileName(FileStats.FileName);
         ItemText[IDC_EDT_FILEPATH] := FileStats.FileName;
-        ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, ThousandsDivide(FileStats.FileSize), '');
+        ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '');
         ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '');
         ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '');
 
-        hwndItem := GetDlgItem(DlgHwnd, IDC_IMG_FILEICON);
-        SendMessage(hwndItem, STM_SETICON, WPARAM(FileStats.hIcon), 0);
+        SendMessage(Item[IDC_IMG_FILEICON], STM_SETICON, WPARAM(FileStats.hIcon), 0);
 
         FValuesWereSet := True;
       end;
@@ -898,9 +924,11 @@ begin
         // update these values always
         ItemText[IDC_EDT_LINES]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Lines));
         ItemText[IDC_EDT_CHARS]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars));
-        ItemText[IDC_EDT_CHARSNOSP] := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars - FileStats.Counters.CharsSpace));
         ItemText[IDC_EDT_WORDS]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Words));
-//        ItemText[IDC_EDT_SMTH]      := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.whatever));
+        ItemText[IDC_EDT_CHARSNOSP] := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars - FileStats.Counters.WhiteSpaces));
+        ItemText[IDC_EDT_LETTERS]   := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Letters));
+        ItemText[IDC_EDT_LATIN]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Latin));
+        ItemText[IDC_EDT_SURR]      := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Surrogates));
       end;
   end;
 
@@ -992,7 +1020,15 @@ end;
 // cleanup
 procedure Finish;
 begin
-  CountThread.WaitFor;
+  // ! If dialog window is closed before counting thread finishes its work, the
+  // message loop of the host application regains control. And it waits for the
+  // plugin's Main function to complete thus not processing any messages. So
+  // SendMessage calls from GetDocInfo to the edit window cause deadlock.
+  // By executing message processing manually here we launch main message loop
+  // again and again until the thread is finished.
+  while CountThread.State <> stInactive do
+    MainDlg.ProcessMessages;
+
   FreeAndNil(CountThread);
   DestroyIcon(FileStats.hIcon);
   FreeAndNil(MainDlg);

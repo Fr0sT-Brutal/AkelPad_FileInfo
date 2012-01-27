@@ -1,0 +1,43 @@
+*****************************************************************
+***              FileInfo AkelPad plugin v0.1                 ***
+***                     BETA VERSION !!!                      ***
+*****************************************************************
+
+2012 Fr0sT
+
+
+*** Description ***
+
+Extended version of the Stats plugin.
+Shows info about opened file:
+	- name
+	- full path
+	- size
+	- creation and modification dates
+and document statistics - counts of:
+	- lines
+	- characters
+	- words
+	- characters without spaces
+	- latin letters
+	- total letters
+	- surrogate pairs
+
+If there's selection present, shows statistics only for it
+
+*** Features ***
+
+*	Uses background thread for counting - doesn't freeze on large files
+*	Russian and english localization included
+*	Much more features coming soon
+
+*** Functions ***
+
+FileInfo::Main
+Main function.
+
+
+*** Credits ***
+
+Statistics counting code is based on the Stats plugin © Shengalts Aleksander aka Instructor (Shengalts@mail.ru)
+Icon designed by Oxygen Team (http://www.oxygen-icons.org)

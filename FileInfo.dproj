@@ -3,7 +3,7 @@
 			<ProjectGuid>{D0745573-728E-4128-8268-4208B0F2A62A}</ProjectGuid>
 			<ProjectVersion>12.0</ProjectVersion>
 			<MainSource>FileInfo.dpr</MainSource>
-			<Config Condition="'$(Config)'==''">Debug</Config>
+			<Config Condition="'$(Config)'==''">Release</Config>
 			<DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
@@ -23,13 +23,14 @@
 			<BRCC_CompilerToUse>rc</BRCC_CompilerToUse>
 			<GenDll>true</GenDll>
 			<DCC_UnitSearchPath>#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-			<DCC_ExeOutput>AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
 			<DCC_UnitAlias>WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;$(DCC_UnitAlias)</DCC_UnitAlias>
-			<DCC_DependencyCheckOutputName>AkelPad\AkelFiles\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>FileInfo.dll</DCC_DependencyCheckOutputName>
 			<DCC_ImageBase>00400000</DCC_ImageBase>
 			<DCC_Platform>x86</DCC_Platform>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_1)'!=''">
+			<DCC_DependencyCheckOutputName>Release\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
+			<DCC_ExeOutput>Release\Plugs</DCC_ExeOutput>
 			<DCC_IOChecking>false</DCC_IOChecking>
 			<DCC_RunTimeTypeInfo>true</DCC_RunTimeTypeInfo>
 			<DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -38,6 +39,8 @@
 			<DCC_DebugInformation>false</DCC_DebugInformation>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2)'!=''">
+			<DCC_ExeOutput>AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
+			<DCC_DependencyCheckOutputName>AkelPad\AkelFiles\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
 			<DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
 		</PropertyGroup>
 		<ItemGroup>
@@ -80,8 +83,8 @@
 						<VersionInfo Name="IncludeVerInfo">True</VersionInfo>
 						<VersionInfo Name="AutoIncBuild">False</VersionInfo>
 						<VersionInfo Name="MajorVer">0</VersionInfo>
-						<VersionInfo Name="MinorVer">0</VersionInfo>
-						<VersionInfo Name="Release">1</VersionInfo>
+						<VersionInfo Name="MinorVer">1</VersionInfo>
+						<VersionInfo Name="Release">10</VersionInfo>
 						<VersionInfo Name="Build">0</VersionInfo>
 						<VersionInfo Name="Debug">False</VersionInfo>
 						<VersionInfo Name="PreRelease">False</VersionInfo>
@@ -94,13 +97,13 @@
 					<VersionInfoKeys>
 						<VersionInfoKeys Name="CompanyName"/>
 						<VersionInfoKeys Name="FileDescription">AkelPad (x86) text editor plugin</VersionInfoKeys>
-						<VersionInfoKeys Name="FileVersion">0.0.1.0</VersionInfoKeys>
+						<VersionInfoKeys Name="FileVersion">0.1.10.0</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName"/>
 						<VersionInfoKeys Name="LegalCopyright">Fr0sT</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalTrademarks"/>
 						<VersionInfoKeys Name="OriginalFilename"/>
 						<VersionInfoKeys Name="ProductName">FileInfo</VersionInfoKeys>
-						<VersionInfoKeys Name="ProductVersion">0.0.1.0</VersionInfoKeys>
+						<VersionInfoKeys Name="ProductVersion">1.0.0.0</VersionInfoKeys>
 						<VersionInfoKeys Name="Comments"/>
 					</VersionInfoKeys>
 					<Excluded_Packages>
