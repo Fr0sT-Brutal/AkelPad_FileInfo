@@ -11,12 +11,10 @@
 
 {
  TO DO:
-   * launch parameters
-   * buttons for Browse, Copy path, Open in assoc program
-   * Default icon when - ?
-   * not a file (selection) - ?
-   * empty file - 1 line
-
+   * parameters
+   * buttons for Browse, Copy path, Open in assoc program, show explorer menu
+   * Default icon when couldn't get - ?
+   * full report as text
 }
 
 library FileInfo;
@@ -26,14 +24,8 @@ library FileInfo;
 {$R 'Icon.res'}
 
 uses
-  Windows,
-  Messages,
-  SysUtils,
-  Character,
-  CommCtrl,
-  ShellApi,
-  IceUtils,
-  ResDialog,
+  Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
+  IceUtils, ResDialog,
   AkelDLL_h in '#AkelDefs\AkelDLL_h.pas',
   AkelEdit_h in '#AkelDefs\AkelEdit_h.pas';
 
@@ -68,13 +60,15 @@ type
     hIcon: HICON;              // Shell icon handle
     // general document info
     CodePage: Integer;         //
+    Selection,
+    IsModified: Boolean;
     // counters
     Counters: TDocCountStats;
   end;
 
   // internal data and structures for counting
 
-  TCountData = record     {}
+  TCountData = record
     hMainWnd, hEditWnd: HWND;  // main window and edit window
     Complete: Boolean;         // True if count process is finished
   end;
@@ -99,11 +93,12 @@ type
     FhTargetWnd: HWND;
     FCountData: TCountData;
     FState: TThreadState;
+    FFileName: string;
   private
     procedure CountCallback(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
     function Execute: DWORD;
   public
-    procedure Run(TargetWnd: HWND; const CountData: TCountData);
+    procedure Run(TargetWnd: HWND; const CountData: TCountData; const FileStats: TFileStats);
     procedure Stop;
 
     property State: TThreadState read FState;
@@ -114,10 +109,16 @@ const
   CharsPerCycle = 5000;  {}
 
   // Count thread -> main dialog window
+  //   Update counters.
   //   wParam: TThreadState
   //   lParam: pointer to TCountProgress record. CountProgress.PercentDone = 100
   //           means the thread has finished normally
-  MSG_UPD_COUNT = WM_USER + $FF1;
+  MSG_UPD_COUNT = WM_APP + $FF1;
+  // Count thread -> main dialog window
+  //   Shell icon of the file is extracted, show it
+  //   wParam: HICON
+  //   lParam: 0
+  MSG_ICON_EXTRACTED = WM_APP + $FF2;
 
 {$REGION 'Localization'}
 
@@ -135,6 +136,8 @@ type
     idPgFileLabelCreated,
     idPgFileLabelModified,
     idPgFileTextSizePatt,
+    idPgFileLabelWarnMsgNotSaved,
+    idPgFileLabelWarnMsgNotAFile,
     idPgDocLabelCodePage,
     idPgDocLabelLines,
     idPgDocLabelChars,
@@ -166,7 +169,7 @@ const
       LangId: LANG_RUSSIAN;
       Strings: (
         'Свойства файла',
-        'Свойства выделенного фрагмента',
+        'Свойства выделенного текста',
         'Файл',
         'Текст',
         'Путь',
@@ -174,6 +177,8 @@ const
         'Создан',
         'Изменён',
         '%s байт',
+        'Есть несохранённые изменения',
+        'Документ не сохранён в файл',
         'Кодировка',
         'Строки',
         'Символы',
@@ -203,6 +208,8 @@ const
         'Created',
         'Modified',
         '%s byte(s)',
+        'There are some changes unsaved',
+        'Document is not saved to a file',
         'Codepage',
         'Lines',
         'Chars',
@@ -248,7 +255,7 @@ type
   // dialog classes
   TPageDlg = class;
 
-  TMainDlg = class(TResTextDialog)
+  TMainDlg = class(TResDialog)
   strict private
     FPages: array[TTabPage] of TPageDlg;
     FAppIcon: HICON;
@@ -259,7 +266,7 @@ type
     destructor Destroy; override;
   end;
 
-  TPageDlg = class(TResTextDialog)
+  TPageDlg = class(TResDialog)
   strict private
     FOwner: TMainDlg;
     FPage: TTabPage;
@@ -281,13 +288,14 @@ var
   MainDlg: TMainDlg;
   CountThread: TCountThread;
   CountData: TCountData;  {}
+  hiWarn, hiErr: HICON;
 
 // ***** SERVICE FUNCTIONS ***** \\
 
 // Retrieve file properties.
 function GetFileInfo(var CountData: TCountData; var FileStats: TFileStats): Boolean;
 var ei: TEDITINFO;
-    ShInf: TSHFileInfo;
+    crInit: TAECHARRANGE;
 begin
   DestroyIcon(FileStats.hIcon);
   Finalize(FileStats);
@@ -307,19 +315,33 @@ begin
   begin
     FileStats.FileSize := GetFileSize(FileStats.FileName);
     GetFileTime(FileStats.FileName, tsLoc, @FileStats.Created, nil, @FileStats.Modified);
+  end;
+
+  FileStats.IsModified := ei.bModified;
+  FileStats.CodePage := ei.nCodePage;
+  // Check if there's selection present
+  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@crInit.ciMin));
+  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@crInit.ciMax));
+  FileStats.Selection := (AEC_IndexCompare(crInit.ciMin, crInit.ciMax) <> 0);
+
+  Result := True;
+end;
+
+// Extract shell icon of the file
+// ! Executes in the context of the counter thread !
+function ExtractShellIcon(const FileName: string): HICON;
+var ShInf: TSHFileInfo;
+begin
+  if FileStats.FileName <> '' then  {}
+  begin
     ZeroMem(ShInf, SizeOf(ShInf));
-    SHGetFileInfo(PChar(FileStats.FileName), FILE_ATTRIBUTE_NORMAL, ShInf, SizeOf(ShInf),
+    SHGetFileInfo(PChar(FileName), FILE_ATTRIBUTE_NORMAL, ShInf, SizeOf(ShInf),
                   SHGFI_USEFILEATTRIBUTES or SHGFI_ICON or SHGFI_LARGEICON); {}//check result
 //    if ShInf.hIcon then
 
-    FileStats.hIcon := ShInf.hIcon;
+    Result := ShInf.hIcon;
     {}// load empty icon
   end;
-  {} // show "(not a file)" or even hide the page
-  {}// unsaved files - ?
-
-  FileStats.CodePage := ei.nCodePage;
-  Result := True;
 end;
 
 // Retrieve document properties.
@@ -415,7 +437,11 @@ begin
     line1 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line1), 0);
     line2 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line2), 0);
   end;
-  CountProgress.Counters.Lines := line2 - line1 + 1;
+  // empty document - special case
+  if line2 = 0 then
+    CountProgress.Counters.Lines := 0
+  else
+    CountProgress.Counters.Lines := line2 - line1 + 1;
 
   {}// selection present, if caret is on the 1st char - excess line
 
@@ -685,11 +711,12 @@ begin
 end;
 
 // Launch the counting thread
-procedure TCountThread.Run(TargetWnd: HWND; const CountData: TCountData);
+procedure TCountThread.Run(TargetWnd: HWND; const CountData: TCountData; const FileStats: TFileStats);
 begin
   if FState = stRunning then Exit;
   FCountData := CountData;
   FhTargetWnd := TargetWnd;
+  FFileName := FileStats.FileName;
   FhThread := CreateThread(nil, 0, @ThreadProc, Self, 0, FidThread);
   SetThreadPriority(FhThread, THREAD_PRIORITY_BELOW_NORMAL);
 end;
@@ -706,6 +733,9 @@ end;
 function TCountThread.Execute: DWORD;
 begin
   FState := stRunning;
+
+  // retrieve shell icon here instead of the main thread because it lasts 0.5..1 sec sometimes
+  SendMessage(FhTargetWnd, MSG_ICON_EXTRACTED, WPARAM(ExtractShellIcon(FFileName)), 0);
 
   // thread cycle
   GetDocInfo(FCountData, CountCallbackProc);
@@ -731,9 +761,8 @@ begin
   inherited Create(pd.hInstanceDLL, IDD_DLG_MAIN, pd.hMainWnd);
 
   FAppIcon := pd.hMainIcon;
-  Caption := LangString(idTitleFileProps); {}
-  ItemText[IDC_BTN_OK] := LangString(idMainBtnOK);
 
+  ItemText[IDC_BTN_OK] := LangString(idMainBtnOK);
   FTabPageCaptions[tabFile] := LangString(idPgFileTitle);
   FTabPageCaptions[tabDoc] := LangString(idPgDocTitle);
 
@@ -764,6 +793,7 @@ begin
     RDM_DLGOPENING:
       begin
         SendMessage(DlgHwnd, WM_SETICON, ICON_SMALL, Windows.LPARAM(FAppIcon));
+        Caption := IfTh(FileStats.Selection, LangString(idTitleSelProps), LangString(idTitleFileProps));
 
         hwndTab := Item[IDC_TAB];
         // init tabs
@@ -777,6 +807,8 @@ begin
           // parent window handle changes every time so set the actual one
           FPages[pg].ParentHwnd := hwndTab;
         end;
+        // select the probably required page (text stats if selection is present)
+        SendMessage(hwndTab, TCM_SETCURSEL, IfTh(FileStats.Selection, Integer(tabDoc), Integer(tabFile)), 0);
 
         // imitate page change to init the page dialog
         NotifyHdr.hwndFrom := DlgHwnd;
@@ -785,7 +817,7 @@ begin
         SendMessage(DlgHwnd, WM_NOTIFY, 0, Windows.LPARAM(@NotifyHdr));
 
         FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
-        CountThread.Run(DlgHwnd, CountData); // start counting
+        CountThread.Run(DlgHwnd, CountData, FileStats); // start counting
       end;
 
     // dialog is closing - stop the thread
@@ -843,6 +875,12 @@ begin
         Res := LRESULT(True);
       end;
 
+    MSG_ICON_EXTRACTED:
+      begin
+        FileStats.hIcon := HICON(wParam);
+        FPages[tabFile].SetValues;
+      end;
+
     WM_COMMAND:
       begin
 //  mlog.AddLine(mkinfo, 'main command');
@@ -861,7 +899,7 @@ begin
   FPage := Page;
   case FPage of
     tabFile:
-        SetItemTexts([
+        SetItemData([
               ItemData(IDC_STC_FILEPATH, LangString(idPgFileLabelPath)),
               ItemData(IDC_STC_FILESIZE, LangString(idPgFileLabelSize)),
               ItemData(IDC_STC_CREATED,  LangString(idPgFileLabelCreated)),
@@ -873,7 +911,7 @@ begin
               ItemData(IDC_EDT_MODIFIED, '')
              ]);
     tabDoc:
-        SetItemTexts([
+        SetItemData([
               ItemData(IDC_STC_CODEPAGE,  LangString(idPgDocLabelCodePage)),
               ItemData(IDC_STC_LINES,     LangString(idPgDocLabelLines)),
               ItemData(IDC_STC_CHARS,     LangString(idPgDocLabelChars)),
@@ -898,21 +936,56 @@ end;
 
 // set text values form FileStats record
 procedure TPageDlg.SetValues;
-//var hwndItem: HWND;
+var ShowWarnMsg: Boolean;
+const // determined from user32.dll's resources
+  ID_APPLICATION = 100;
+  ID_WARNING     = 101;
+  ID_QUESTION    = 102;
+  ID_ERROR       = 103;
+  ID_INFORMATION = 104;
+  ID_WINLOGO     = 105;
+  ID_SHIELD      = 106;
 begin
   case FPage of
     tabFile:
-      if not FValuesWereSet then // only once because values won't change
       begin
-        ItemText[IDC_EDT_FILENAME] := ExtractFileName(FileStats.FileName);
-        ItemText[IDC_EDT_FILEPATH] := FileStats.FileName;
-        ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '');
-        ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '');
-        ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '');
-
+        if not FValuesWereSet then // some values might change (during count process) and some might not
+        begin
+          ItemText[IDC_EDT_FILENAME] := ExtractFileName(FileStats.FileName);
+          ItemText[IDC_EDT_FILEPATH] := FileStats.FileName;
+          ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '');
+          ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '');
+          ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '');
+          // the content is not saved to file
+          if FileStats.FileName = '' then
+          begin
+            if hiErr = 0 then
+              hiErr := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_ERROR),
+                                 IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+                                 LR_DEFAULTCOLOR);
+            SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiErr), 0);
+            ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotAFile);
+            ShowWarnMsg := True;
+          end
+          // there are some changes unsaved
+          else if FileStats.IsModified then
+          begin
+            if hiWarn = 0 then
+              hiWarn := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_WARNING),
+                                 IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+                                 LR_DEFAULTCOLOR);
+            SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiWarn), 0);
+            ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotSaved);
+            ShowWarnMsg := True;
+          end
+          else
+            ShowWarnMsg := False;
+          ShowWindow(Item[IDC_IMG_WARNMSG], IfTh(ShowWarnMsg, SW_NORMAL, SW_HIDE));
+          ShowWindow(Item[IDC_STC_WARNMSG], IfTh(ShowWarnMsg, SW_NORMAL, SW_HIDE));
+          FValuesWereSet := True;
+        end;
+        // update these values always
         SendMessage(Item[IDC_IMG_FILEICON], STM_SETICON, WPARAM(FileStats.hIcon), 0);
-
-        FValuesWereSet := True;
       end;
     tabDoc:
       begin
@@ -974,7 +1047,7 @@ begin
               begin
                 FileStats.Counters.Actual := False;
                 SetValues;
-                CountThread.Run(FOwner.DlgHwnd, CountData);
+                CountThread.Run(FOwner.DlgHwnd, CountData, FileStats);
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
                 Res := LRESULT(True);
               end;
@@ -1032,6 +1105,8 @@ begin
   FreeAndNil(CountThread);
   DestroyIcon(FileStats.hIcon);
   FreeAndNil(MainDlg);
+  DestroyIcon(hiWarn);
+  DestroyIcon(hiErr);
 end;
 
 // Identification

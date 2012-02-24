@@ -8,7 +8,7 @@
 
 *** Description ***
 
-Extended version of the Stats plugin.
+Extended analogue of the Stats plugin.
 Shows info about opened file:
 	- name
 	- full path
