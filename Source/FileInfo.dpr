@@ -1,13 +1,12 @@
-(*****************************************
-    FileInfo plugin for AkelPad editor
-                 © Fr0sT
+        (*****************************************
+            FileInfo plugin for AkelPad editor
+                         © Fr0sT
 
-  Shows properties of a currently edited file
-  as long as some its contents statistics.
-  Something similar to Stats plugin but provides
-  more info.
+  Shows properties of a currently edited file as long as some
+  statistics for its contents .
+  Something similar to Stats plugin but provides more info.
 
-*****************************************)
+         *****************************************)
 
 {
  TO DO:
@@ -15,6 +14,7 @@
    * buttons for Browse, Copy path, Open in assoc program, show explorer menu
    * Default icon when couldn't get - ?
    * full report as text
+   * codepage description
 }
 
 library FileInfo;
