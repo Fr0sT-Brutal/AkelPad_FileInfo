@@ -29,8 +29,8 @@
 			<DCC_Platform>x86</DCC_Platform>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_1)'!=''">
-			<DCC_DependencyCheckOutputName>Release\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
-			<DCC_ExeOutput>Release\Plugs</DCC_ExeOutput>
+			<DCC_DependencyCheckOutputName>..\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
+			<DCC_ExeOutput>..\Plugs</DCC_ExeOutput>
 			<DCC_IOChecking>false</DCC_IOChecking>
 			<DCC_RunTimeTypeInfo>true</DCC_RunTimeTypeInfo>
 			<DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -39,8 +39,8 @@
 			<DCC_DebugInformation>false</DCC_DebugInformation>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2)'!=''">
-			<DCC_ExeOutput>AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
-			<DCC_DependencyCheckOutputName>AkelPad\AkelFiles\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
+			<DCC_ExeOutput>..\_AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
+			<DCC_DependencyCheckOutputName>..\_AkelPad\AkelFiles\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
 			<DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
 		</PropertyGroup>
 		<ItemGroup>
@@ -77,7 +77,7 @@
 						<Parameters Name="UseLauncher">False</Parameters>
 						<Parameters Name="LoadAllSymbols">True</Parameters>
 						<Parameters Name="LoadUnspecifiedSymbols">False</Parameters>
-						<Parameters Name="HostApplication">AkelPad\AkelPad.exe</Parameters>
+						<Parameters Name="HostApplication">..\_AkelPad\AkelPad.exe</Parameters>
 					</Parameters>
 					<VersionInfo>
 						<VersionInfo Name="IncludeVerInfo">True</VersionInfo>
