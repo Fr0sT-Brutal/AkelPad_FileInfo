@@ -1,3 +1,5 @@
 FileInfo AkelPad plugin
 
 Visit \Docs\FileInfo-*.txt for description
+
+To compile the plugin, you need AkelPad plugin API units that could be found in the neighbour repository "AkelPad_AkelDefs". Place these units to the folder <Plugin>\Source\#AkelDefs.

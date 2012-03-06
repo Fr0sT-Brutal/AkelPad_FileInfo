@@ -14,7 +14,8 @@
    * buttons for Browse, Copy path, Open in assoc program, show explorer menu
    * Default icon when couldn't get - ?
    * full report as text
-   * codepage description
+   * I did a test on this text: Text for test.
+   * - имя файла открыть бы для редактирования, если изменено, пытаться переименовывать
 }
 
 library FileInfo;
@@ -36,17 +37,20 @@ const
 
 type
   // statistics that are counted in the separate thread
+  TDocCountState = (cntNotActual, cntInProcess, cntCompleted);
+
   TDocCountStats = record
-    Actual: Boolean;           // Whether the values have their meaning (True if the count
-                               // process has finished normally or is running, False if
-                               // it was interrupted)
+    State: TDocCountState;     // Current counting state
+                               //   cntNotActual - the values are obsolete and must not be shown
+                               //   cntInProcess - the count is running, some values would be shown and some wouldn't
+                               //   cntCompleted - the count has finished normally, show all values
     Lines,                     // Without word wrap
     Chars,                     // Total chars
-    Words,                     // words according to Akel settings
+    Words,                     // Words according to Akel settings
     WhiteSpaces,               // Spaces, tabs, etc
-    Latin,                     // latin letters
-    Letters,                   // all letters
-    Surrogates                 // surrogate pairs
+    Latin,                     // Latin letters
+    Letters,                   // All letters
+    Surrogates                 // Surrogate pairs
       : Int64;
   end;
 
@@ -68,11 +72,11 @@ type
 
   // internal data and structures for counting
 
-  TCountData = record
-    hMainWnd, hEditWnd: HWND;  // main window and edit window
-    Complete: Boolean;         // True if count process is finished
+  TAkelData = record
+    hMainWnd,        // main Akel window
+    hEditWnd: HWND;  // current editor window
   end;
-  PCountData = ^TCountData;
+//  PCountData = ^TCountData;
 
   // current counting state
   TCountProgress = record
@@ -81,7 +85,7 @@ type
   end;
   PCountProgress = ^TCountProgress;
 
-  TCountCallback = procedure(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+  TCountCallback = procedure(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
 
   TThreadState = (stInactive, stRunning, stTerminated);
 
@@ -91,14 +95,14 @@ type
     FhThread: THandle;
     FidThread: DWORD;
     FhTargetWnd: HWND;
-    FCountData: TCountData;
+    FAkelData: TAkelData;
     FState: TThreadState;
     FFileName: string;
   private
-    procedure CountCallback(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+    procedure CountCallback(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
     function Execute: DWORD;
   public
-    procedure Run(TargetWnd: HWND; const CountData: TCountData; const FileStats: TFileStats);
+    procedure Run(TargetWnd: HWND; const AkelData: TAkelData; const FileStats: TFileStats);
     procedure Stop;
 
     property State: TThreadState read FState;
@@ -139,10 +143,11 @@ type
     idPgFileLabelWarnMsgNotSaved,
     idPgFileLabelWarnMsgNotAFile,
     idPgDocLabelCodePage,
-    idPgDocLabelLines,
     idPgDocLabelChars,
-    idPgDocLabelWords,
+    idPgDocLabelCharsTotal,
     idPgDocLabelCharsNoSp,
+    idPgDocLabelLines,
+    idPgDocLabelWords,
     idPgDocLabelLatin,
     idPgDocLabelLetters,
     idPgDocLabelSurr,
@@ -180,10 +185,11 @@ const
         'Есть несохранённые изменения',
         'Документ не сохранён в файл',
         'Кодировка',
-        'Строки',
         'Символы',
+        'всего',
+        'без пробелов',
+        'Строки',
         'Слова',
-        'Символы без пробелов',
         'Латинские буквы',
         'Буквы',
         'Суррогатные пары',
@@ -211,10 +217,11 @@ const
         'There are some changes unsaved',
         'Document is not saved to a file',
         'Codepage',
-        'Lines',
         'Chars',
+        'total',
+        'without spaces',
+        'Lines',
         'Words',
-        'Chars without spaces',
         'Latin letters',
         'Letters',
         'Surrogate pairs',
@@ -287,13 +294,13 @@ var
   FileStats: TFileStats;
   MainDlg: TMainDlg;
   CountThread: TCountThread;
-  CountData: TCountData;  {}
+  AkelData: TAkelData;
   hiWarn, hiErr: HICON;
 
 // ***** SERVICE FUNCTIONS ***** \\
 
 // Retrieve file properties.
-function GetFileInfo(var CountData: TCountData; var FileStats: TFileStats): Boolean;
+function GetFileInfo(var AkelData: TAkelData; var FileStats: TFileStats): Boolean;
 var ei: TEDITINFO;
     crInit: TAECHARRANGE;
 begin
@@ -302,16 +309,16 @@ begin
   ZeroMem(FileStats, SizeOf(FileStats));
 
   ZeroMem(ei, SizeOf(ei));
-  if (CountData.hMainWnd = 0) or
-     (CountData.hEditWnd = 0) or
-     (SendMessage(CountData.hMainWnd, AKD_GETEDITINFO, 0, LPARAM(@ei)) = 0) then
+  if (AkelData.hMainWnd = 0) or
+     (AkelData.hEditWnd = 0) or
+     (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, LPARAM(@ei)) = 0) then
        Exit(False);
 
   if ei.wszFile <> nil then
     FileStats.FileName := string(ei.wszFile)
   else if ei.szFile <> nil then
     FileStats.FileName := string(AnsiString(ei.szFile));
-  if FileStats.FileName <> '' then  {}
+  if FileStats.FileName <> '' then
   begin
     FileStats.FileSize := GetFileSize(FileStats.FileName);
     GetFileTime(FileStats.FileName, tsLoc, @FileStats.Created, nil, @FileStats.Modified);
@@ -319,9 +326,10 @@ begin
 
   FileStats.IsModified := ei.bModified;
   FileStats.CodePage := ei.nCodePage;
+
   // Check if there's selection present
-  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@crInit.ciMin));
-  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@crInit.ciMax));
+  SendMessage(AkelData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@crInit.ciMin));
+  SendMessage(AkelData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@crInit.ciMax));
   FileStats.Selection := (AEC_IndexCompare(crInit.ciMin, crInit.ciMax) <> 0);
 
   Result := True;
@@ -347,7 +355,7 @@ end;
 // Retrieve document properties.
 // ! Executes in the context of the counter thread !
 // Acts on the basis of CountData.CountState (and changes it when count stage is changing).
-procedure GetDocInfo(var CountData: TCountData; CountCallback: TCountCallback);
+procedure GetDocInfo(var AkelData: TAkelData; CountCallback: TCountCallback);
 var
   line1, line2, WordCnt, CharCnt, tmp: Integer;
   Selection, Wrap, ColumnSel: Boolean;  // current document modes
@@ -370,7 +378,7 @@ function RunCallback: Boolean;
 begin
   Result := True;
   if not Assigned(CountCallback) then Exit;
-  CountCallback(CountData, CountProgress, Result);
+  CountCallback(AkelData, CountProgress, Result);
 end;
 
 // Recalculate current percent and launch callback
@@ -411,31 +419,30 @@ end;
 
 begin
   ZeroMem(CountProgress, SizeOf(CountProgress));
-  CountProgress.Counters.Actual := True;
-  CountData.Complete := False;
+  CountProgress.Counters.State := cntInProcess;
 
   // *** get basic document info ***
 
-  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@crInit.ciMin));
-  SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@crInit.ciMax));
+  SendMessage(AkelData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTSELCHAR, LPARAM(@crInit.ciMin));
+  SendMessage(AkelData.hEditWnd, AEM_GETINDEX, AEGI_LASTSELCHAR,  LPARAM(@crInit.ciMax));
 
   // Check if there's selection and wrapping present
   Selection := (AEC_IndexCompare(crInit.ciMin, crInit.ciMax) <> 0);
-  Wrap := SendMessage(CountData.hEditWnd, AEM_GETWORDWRAP, 0, LPARAM(nil)) <> 0;
-  ColumnSel := SendMessage(CountData.hEditWnd, AEM_GETCOLUMNSEL, 0, 0) <> 0;
+  Wrap := SendMessage(AkelData.hEditWnd, AEM_GETWORDWRAP, 0, LPARAM(nil)) <> 0;
+  ColumnSel := SendMessage(AkelData.hEditWnd, AEM_GETCOLUMNSEL, 0, 0) <> 0;
 
   // lines count
   if not Selection then
   begin
-    SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTCHAR, LPARAM(@crInit.ciMin));
-    SendMessage(CountData.hEditWnd, AEM_GETINDEX, AEGI_LASTCHAR, LPARAM(@crInit.ciMax));
+    SendMessage(AkelData.hEditWnd, AEM_GETINDEX, AEGI_FIRSTCHAR, LPARAM(@crInit.ciMin));
+    SendMessage(AkelData.hEditWnd, AEM_GETINDEX, AEGI_LASTCHAR, LPARAM(@crInit.ciMax));
   end;
   line1 := crInit.ciMin.nLine;
   line2 := crInit.ciMax.nLine;
   if Wrap then
   begin
-    line1 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line1), 0);
-    line2 := SendMessage(CountData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line2), 0);
+    line1 := SendMessage(AkelData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line1), 0);
+    line2 := SendMessage(AkelData.hEditWnd, AEM_GETUNWRAPLINE, WPARAM(line2), 0);
   end;
   // empty document - special case
   if line2 = 0 then
@@ -450,7 +457,7 @@ begin
   isChars.ciChar2 := @crInit.ciMin;
   isChars.bColumnSel := BOOL(-1);
   isChars.nNewLine := AELB_ASOUTPUT;
-  CountProgress.Counters.Chars := SendMessage(CountData.hEditWnd, AEM_INDEXSUBTRACT, 0, LPARAM(@isChars));
+  CountProgress.Counters.Chars := SendMessage(AkelData.hEditWnd, AEM_INDEXSUBTRACT, 0, LPARAM(@isChars));
 
   CountProgress.PercentDone := 100;
   if not RunCallback then Exit;
@@ -469,7 +476,7 @@ begin
 
     repeat
       // returns number of characters skipped to the next word
-      tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciCount));
+      tmp := SendMessage(AkelData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciCount));
 
       // EOF - finish the cycle
       if tmp = 0 then
@@ -509,7 +516,7 @@ begin
         ciWordEnd := crCount.ciMin;
         repeat
           // returns number of characters skipped to the next word
-          tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
+          tmp := SendMessage(AkelData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
           // EOF - finish the cycle
           if tmp = 0 then
           begin
@@ -525,7 +532,7 @@ begin
           begin
             IsFirst := False;
             ciWordStart := ciWordEnd;
-            if SendMessage(CountData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@ciWordStart)) <> 0 then
+            if SendMessage(AkelData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@ciWordStart)) <> 0 then
               if AEC_IndexCompare(crCount.ciMin, ciWordStart) <= 0 then
                 Inc(WordCnt);
           end
@@ -561,7 +568,7 @@ begin
       repeat
         ciWordEnd := crCount.ciMin;
         // returns number of characters skipped to the next word
-        tmp := SendMessage(CountData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
+        tmp := SendMessage(AkelData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
         // EOF - finish the cycle
         if (tmp = 0) or (AEC_IndexCompare(ciWordEnd, crCount.ciMax) > 0) then
         begin
@@ -573,7 +580,7 @@ begin
         begin
           IsFirst := False;
           ciWordStart := ciWordEnd;
-          if SendMessage(CountData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@ciWordStart)) <> 0 then
+          if SendMessage(AkelData.hEditWnd, AEM_GETPREVBREAK, AEWB_LEFTWORDSTART, LPARAM(@ciWordStart)) <> 0 then
             if AEC_IndexCompare(crCount.ciMin, ciWordStart) <= 0 then
               Inc(WordCnt);
         end
@@ -637,17 +644,17 @@ begin
         else
         if TCharacter.IsLetter(CurrChar) then
           Inc(CountProgress.Counters.Letters);
-        //...
+        {}//...
       end
       else                               // surrogate pair
       begin
         Inc(CountProgress.Counters.Surrogates);
-        //... check for letters ...
+        {}//... check for letters ...
       end;
     end
     else
     begin
-      {
+      {}{
       if (ciCount.lpLine->nLineBreak == AELB_R || ciCount.lpLine->nLineBreak == AELB_N)
         ++nCharLatinOther;
       else if (ciCount.lpLine->nLineBreak == AELB_RN)
@@ -668,7 +675,7 @@ begin
 
   Inc(CountProgress.Counters.Letters, CountProgress.Counters.Latin);
   // all the counts are finished
-  CountData.Complete := True;
+  CountProgress.Counters.State := cntCompleted;
   ReportCharCount;
 end;
 
@@ -682,39 +689,32 @@ begin
 end;
 
 // broker function allowing to use class method as the GetDocInfo callback
-procedure CountCallbackProc(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+procedure CountCallbackProc(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
 begin
-  CountThread.CountCallback(CountData, CountProgress, Continue);
+  CountThread.CountCallback(AkelData, CountProgress, Continue);
 end;
 
 // counting thread methods
 
-procedure TCountThread.CountCallback(var CountData: TCountData; var CountProgress: TCountProgress; var Continue: Boolean);
+procedure TCountThread.CountCallback(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
 begin
+  // make counters obsolete if the thread is being terminated
   if FState = stTerminated then
-  begin
-    // Send final count state
-    CountProgress.Counters.Actual := False;
-    SendMessage(FhTargetWnd, MSG_UPD_COUNT, WPARAM(FState), LPARAM(@CountProgress));
-    Continue := False;
-    Exit;
-  end;
-
+    CountProgress.Counters.State := cntNotActual
   // change the thread state if count process is completed
-  if CountData.Complete then
-    FState := stInactive;
-
+  else
+    if CountProgress.Counters.State = cntCompleted then
+      FState := stInactive;
   // send current counters and thread state to the main window
+  Continue := (FState <> stTerminated);
   SendMessage(FhTargetWnd, MSG_UPD_COUNT, WPARAM(FState), LPARAM(@CountProgress));
-
-  Continue := True;
 end;
 
 // Launch the counting thread
-procedure TCountThread.Run(TargetWnd: HWND; const CountData: TCountData; const FileStats: TFileStats);
+procedure TCountThread.Run(TargetWnd: HWND; const AkelData: TAkelData; const FileStats: TFileStats);
 begin
   if FState = stRunning then Exit;
-  FCountData := CountData;
+  FAkelData := AkelData;
   FhTargetWnd := TargetWnd;
   FFileName := FileStats.FileName;
   FhThread := CreateThread(nil, 0, @ThreadProc, Self, 0, FidThread);
@@ -738,7 +738,7 @@ begin
   SendMessage(FhTargetWnd, MSG_ICON_EXTRACTED, WPARAM(ExtractShellIcon(FFileName)), 0);
 
   // thread cycle
-  GetDocInfo(FCountData, CountCallbackProc);
+  GetDocInfo(FAkelData, CountCallbackProc);
 
   // if exiting normally, return "OK", otherwise return error
   Result := IfTh(FState = stTerminated, DWORD(-1), 0);
@@ -748,7 +748,7 @@ begin
   FidThread := 0;
   FhTargetWnd := 0;
   FState := stInactive;
-  ZeroMem(FCountData, SizeOf(FCountData));
+  ZeroMem(FAkelData, SizeOf(FAkelData));
 end;
 
 // ***** DIALOGS ***** \\
@@ -782,7 +782,7 @@ begin
 end;
 
 procedure TMainDlg.DoDialogProc(msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
-var hwndTab, hwndPb: HWND;
+var hwndTab: HWND;
     pg: TTabPage;
     tabItem: TTCItem;
     NotifyHdr: TNMHdr;
@@ -817,7 +817,7 @@ begin
         SendMessage(DlgHwnd, WM_NOTIFY, 0, Windows.LPARAM(@NotifyHdr));
 
         FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
-        CountThread.Run(DlgHwnd, CountData, FileStats); // start counting
+        CountThread.Run(DlgHwnd, AkelData, FileStats); // start counting
       end;
 
     // dialog is closing - stop the thread
@@ -845,8 +845,9 @@ begin
             begin
               hwndTab := Item[NotifyHdr.idFrom];
               pg := TTabPage(SendMessage(hwndTab, TCM_GETCURSEL, 0, 0));
-              if not FPages[pg].Show(SW_NORMAL) then
+              if not FPages[pg].Show(SW_SHOW) then
                 MsgBox(LastErrMsg);
+              FPages[pg].SetValues;
               Res := LRESULT(True);
             end;
           else
@@ -858,19 +859,18 @@ begin
       begin
         pProgr := PCountProgress(lParam);
         FileStats.Counters := pProgr.Counters;
-        // thread is not active, change button caption
+        // thread is not active, change button caption and hide the progress bar
         if TThreadState(wParam) <> stRunning then
+        begin
           FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
+          ShowWindow(FPages[tabDoc].Item[IDC_PGB_PROCESS], SW_HIDE);
+        end;
 
         // change values on the doc page only if it is visible
         if not IsWindowVisible(FPages[tabDoc].DlgHwnd) then Exit;
         FPages[tabDoc].SetValues;
-        hwndPb := FPages[tabDoc].Item[IDC_PGB_PROCESS];
-        // return progress bar to zero if thread is not active
-        if TThreadState(wParam) <> stRunning then
-          SendMessage(hwndPb, PBM_SETPOS, 0, 0)
-        else
-          SendMessage(hwndPb, PBM_SETPOS, pProgr.PercentDone, 0);
+        if TThreadState(wParam) = stRunning then
+          SendMessage(FPages[tabDoc].Item[IDC_PGB_PROCESS], PBM_SETPOS, pProgr.PercentDone, 0);
 
         Res := LRESULT(True);
       end;
@@ -883,7 +883,6 @@ begin
 
     WM_COMMAND:
       begin
-//  mlog.AddLine(mkinfo, 'main command');
 
       end;
 
@@ -913,20 +912,21 @@ begin
     tabDoc:
         SetItemData([
               ItemData(IDC_STC_CODEPAGE,  LangString(idPgDocLabelCodePage)),
-              ItemData(IDC_STC_LINES,     LangString(idPgDocLabelLines)),
               ItemData(IDC_STC_CHARS,     LangString(idPgDocLabelChars)),
-              ItemData(IDC_STC_WORDS,     LangString(idPgDocLabelWords)),
+              ItemData(IDC_STC_CHARSTOT,  LangString(idPgDocLabelCharsTotal)),
               ItemData(IDC_STC_CHARSNOSP, LangString(idPgDocLabelCharsNoSp)),
+              ItemData(IDC_STC_LINES,     LangString(idPgDocLabelLines)),
+              ItemData(IDC_STC_WORDS,     LangString(idPgDocLabelWords)),
               ItemData(IDC_STC_LATIN,     LangString(idPgDocLabelLatin)),
               ItemData(IDC_STC_LETTERS,   LangString(idPgDocLabelLetters)),
               ItemData(IDC_STC_SURR,      LangString(idPgDocLabelSurr)),
               ItemData(IDC_BTN_STOP,      LangString(idPgDocBtnCount)),
 
               ItemData(IDC_EDT_CODEPAGE,  ''),
-              ItemData(IDC_EDT_LINES,     ''),
-              ItemData(IDC_EDT_CHARS,     ''),
-              ItemData(IDC_EDT_WORDS,     ''),
+              ItemData(IDC_EDT_CHARSTOT,  ''),
               ItemData(IDC_EDT_CHARSNOSP, ''),
+              ItemData(IDC_EDT_LINES,     ''),
+              ItemData(IDC_EDT_WORDS,     ''),
               ItemData(IDC_EDT_LATIN,     ''),
               ItemData(IDC_EDT_LETTERS,   ''),
               ItemData(IDC_EDT_SURR,      '')
@@ -937,6 +937,7 @@ end;
 // set text values form FileStats record
 procedure TPageDlg.SetValues;
 var ShowWarnMsg: Boolean;
+    CPInfo: TCPInfoEx;
 const // determined from user32.dll's resources
   ID_APPLICATION = 100;
   ID_WARNING     = 101;
@@ -980,28 +981,32 @@ begin
           end
           else
             ShowWarnMsg := False;
-          ShowWindow(Item[IDC_IMG_WARNMSG], IfTh(ShowWarnMsg, SW_NORMAL, SW_HIDE));
-          ShowWindow(Item[IDC_STC_WARNMSG], IfTh(ShowWarnMsg, SW_NORMAL, SW_HIDE));
+          ShowWindow(Item[IDC_IMG_WARNMSG], IfTh(ShowWarnMsg, SW_SHOW, SW_HIDE));
+          ShowWindow(Item[IDC_STC_WARNMSG], IfTh(ShowWarnMsg, SW_SHOW, SW_HIDE));
           FValuesWereSet := True;
         end;
         // update these values always
         SendMessage(Item[IDC_IMG_FILEICON], STM_SETICON, WPARAM(FileStats.hIcon), 0);
       end;
+
     tabDoc:
       begin
         if not FValuesWereSet then // some values might change (during count process) and some might not
         begin
-          ItemText[IDC_EDT_CODEPAGE]  := IntToStr(FileStats.CodePage); {}
+          ItemText[IDC_EDT_CODEPAGE] :=
+            IfTh(GetCPInfoEx(FileStats.CodePage, 0, CPInfo), CPInfo.CodePageName, IntToStr(FileStats.CodePage));
           FValuesWereSet := True;
         end;
         // update these values always
-        ItemText[IDC_EDT_LINES]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Lines));
-        ItemText[IDC_EDT_CHARS]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars));
-        ItemText[IDC_EDT_WORDS]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Words));
-        ItemText[IDC_EDT_CHARSNOSP] := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Chars - FileStats.Counters.WhiteSpaces));
-        ItemText[IDC_EDT_LETTERS]   := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Letters));
-        ItemText[IDC_EDT_LATIN]     := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Latin));
-        ItemText[IDC_EDT_SURR]      := IfTh(FileStats.Counters.Actual, ThousandsDivide(FileStats.Counters.Surrogates));
+        ItemText[IDC_EDT_CHARSTOT]  := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Chars));
+        ItemText[IDC_EDT_CHARSNOSP] := IfTh(FileStats.Counters.State =  cntCompleted, ThousandsDivide(FileStats.Counters.Chars - FileStats.Counters.WhiteSpaces));
+        ItemText[IDC_EDT_LINES]     := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Lines));
+        ItemText[IDC_EDT_WORDS]     := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Words));
+        ItemText[IDC_EDT_LETTERS]   := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Letters));
+        ItemText[IDC_EDT_LATIN]     := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Latin));
+        ItemText[IDC_EDT_SURR]      := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Surrogates));
+
+        ShowWindow(Item[IDC_PGB_PROCESS], IfTh(FileStats.Counters.State = cntInProcess, SW_SHOW, SW_HIDE));
       end;
   end;
 
@@ -1013,7 +1018,7 @@ var
   TabClientArea: TRect;
 begin
   case msg of
-    // dialog is showing - set position inside tab page and load values to controls
+    // dialog is showing - set position inside tab page
     RDM_DLGOPENING:
       begin
         // calculate tab's client area
@@ -1023,12 +1028,10 @@ begin
         SetWindowPos(DlgHwnd, 0, TabClientArea.Left, TabClientArea.Top,
                      TabClientArea.Right - TabClientArea.Left, TabClientArea.Bottom - TabClientArea.Top,
                      SWP_NOZORDER);
-        SetValues;
       end;
 
     RDM_DLGCLOSED:
-;
-//        mlog.AddLine(mkinfo, itos(integer(sender)) + ' closed');
+      ;
 
     // notification from control
     WM_COMMAND:
@@ -1040,14 +1043,17 @@ begin
               if CountThread.State = stRunning then
               begin
                 CountThread.Stop;
+                ShowWindow(Item[IDC_PGB_PROCESS], SW_HIDE);
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
                 Res := LRESULT(True);
               end
               else
               begin
-                FileStats.Counters.Actual := False;
+                FileStats.Counters.State := cntNotActual;
                 SetValues;
-                CountThread.Run(FOwner.DlgHwnd, CountData, FileStats);
+                CountThread.Run(FOwner.DlgHwnd, AkelData, FileStats);
+                SendMessage(Item[IDC_PGB_PROCESS], PBM_SETPOS, 0, 0);
+                ShowWindow(Item[IDC_PGB_PROCESS], SW_SHOW);
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
                 Res := LRESULT(True);
               end;
@@ -1062,9 +1068,9 @@ end;
 procedure Init(var pd: TPLUGINDATA);
 begin
   CurrLangId := PRIMARYLANGID(pd.wLangModule);
-  ZeroMem(CountData, SizeOf(CountData));
-  CountData.hMainWnd := pd.hMainWnd;
-  CountData.hEditWnd := pd.hWndEdit;
+  ZeroMem(AkelData, SizeOf(AkelData));
+  AkelData.hMainWnd := pd.hMainWnd;
+  AkelData.hEditWnd := pd.hWndEdit;
 
   MainDlg := TMainDlg.Create(pd);
   MainDlg.Persistent := True;
@@ -1077,7 +1083,7 @@ end;
 // do main work here
 procedure Execute(var pd: TPLUGINDATA);
 begin
-  if not GetFileInfo(CountData, FileStats) then
+  if not GetFileInfo(AkelData, FileStats) then
   begin
     MsgBox(LangString(idMsgGetPropsFail), iStop);
     Exit;
