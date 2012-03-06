@@ -76,7 +76,6 @@ type
     hMainWnd,        // main Akel window
     hEditWnd: HWND;  // current editor window
   end;
-//  PCountData = ^TCountData;
 
   // current counting state
   TCountProgress = record
