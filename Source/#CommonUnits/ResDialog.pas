@@ -15,6 +15,7 @@ unit ResDialog;
 // * (?) исчезает хинт
 // * добавить возможность указывать заголовок и иконку баллуна
 // * коллбэки на хинт - ?
+// * (?) переправлять сообщения элементам в dialogproc
 
 interface
 
@@ -74,9 +75,11 @@ type
     procedure SetPersistent(val: Boolean);
     procedure SetParent(ParentHwnd: HWND);
     procedure SetItemText(ID: Integer; What: Integer; const Text: string);
+    procedure SetItemVisible(ID: Integer; Visible: Boolean);
     // getters
     function GetItem(ID: Integer): HWND;
     function GetItemText(ID: Integer; What: Integer): string;
+    function GetItemVisible(ID: Integer): Boolean;
     // методы
     procedure SetBufSize(Size: Cardinal);
     function Load: Boolean;
@@ -126,7 +129,6 @@ type
     destructor Destroy; override;
 
     procedure SetItemData(const ItemData: array of TDlgItemData);
-    procedure SetItemVisible(ID: Integer; Visible: Boolean);
     function Show(ShowCmd: Integer = SW_NORMAL): Boolean;
     function ShowModal: INT_PTR;
     procedure ProcessMessages;
@@ -141,6 +143,7 @@ type
     property Item[ID: Integer]: HWND                          read GetItem;
     property ItemText[ID: Integer]: string    index CODE_TEXT read GetItemText write SetItemText;
     property ItemTooltip[ID: Integer]: string index CODE_TTIP read GetItemText write SetItemText;
+    property ItemVisible[ID: Integer]: Boolean                read GetItemVisible write SetItemVisible;
   end;
 
 function ItemData(ID: Integer; const Text: string; const Tooltip: string = ''): TDlgItemData; inline;
@@ -522,13 +525,16 @@ end;
 
 // показ/скрытие элемента
 procedure TResDialog.SetItemVisible(ID: Integer; Visible: Boolean);
-var hItem: HWND;
 begin
-  hItem := Item[ID];
-  if hItem = 0 then Exit;
   if Visible
-    then ShowWindow(hItem, SW_SHOW)
-    else ShowWindow(hItem, SW_HIDE);
+    then ShowWindow(Item[ID], SW_SHOW)
+    else ShowWindow(Item[ID], SW_HIDE);
+end;
+
+// определение видимости элемента
+function TResDialog.GetItemVisible(ID: Integer): Boolean;
+begin
+  Result := IsWindowVisible(Item[ID]);
 end;
 
 // Смена родительского окна

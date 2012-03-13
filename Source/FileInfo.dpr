@@ -21,11 +21,20 @@
    * Default icon when couldn't get - ?
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
+   * возможность копировать только имя / только путь
+   * Значок "крестик", когда файл не сохранён, можно помещать в то место,
+     где выводится иконка файла, и там же справа, где указывается имя сохранённого файла,
+     выводить надпись "Документ не сохранён в файл", но не в поле, а лейблом, как сейчас,
+     чтобы не сбивало с толку.
 
  ???
    * icons for buttons
-   * rename: select only name part (without extension)
    * error on renaming - clear stats?
+   * Вообще, чтобы минимизировать интерфейс, можно было бы лейбл "Путь" преобразовать в
+     "гиперссылку" и тогда отпала бы необходимость в кнопке "Обзор", открывающей файл в Проводнике.
+   * А кнопку "копир. путь" можно было бы сделать стандартным значком копирования в буфер справа
+     от поля с именем файла
+
 }
 
 library FileInfo;
@@ -604,6 +613,41 @@ begin
   CopyTextToCB(FileStats.FileName, AkelData.hMainWnd);
 end;
 
+type
+  // Class with static method just to not mess with some special object.
+  // Class (static) methods could work as "procedure of object"
+  THandler = class
+    class procedure InputBoxDialogProc(Sender: TResDialog; msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
+  end;
+
+class procedure THandler.InputBoxDialogProc(Sender: TResDialog; msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
+var
+  Fn: string;
+  pPoint, pFn: PChar;
+  PointPos: Integer;
+  hEdit: HWND;
+begin
+  case msg of
+    // dialog created and is going to be shown
+    // Select only name of the file (no extension) in edit control
+    RDM_DLGOPENING:
+      begin
+        Fn := Sender.ItemText[IDC_EDT_NEWNAME];
+        pFn := PChar(Fn);
+        pPoint := StrRScan(pFn, '.');
+        if pPoint = nil
+          then PointPos := Length(Fn)
+          else PointPos := pPoint - pFn;
+        hEdit := Sender.Item[IDC_EDT_NEWNAME];
+        SetFocus(hEdit);
+        SendMessage(hEdit, EM_SETSEL, 0, PointPos);
+        Res := LRESULT(False); // ! return False in response to WM_INITDIALOG prevents system
+                               // from default focusing (there's no other way to control selection
+                               // in the edit)
+      end;
+  end; // case
+end;
+
 // rename the current file
 //   NewName - name to rename to (without path). If empty, an InputBox will be shown
 function Rename(NewName: string): Boolean;
@@ -636,10 +680,11 @@ begin
 
     InputBox := TResDialog.Create(IDD_DLG_INPUTBOX, hwndParent);
     InputBox.Caption := LangString(idInputBoxCaption);
-    InputBox.SetItemData([ ItemData(IDC_STC_INPUT_LABEL, LangString(idInputBoxLabel)),
-                           ItemData(IDC_EDT_NEWNAME, ExtractFileName(FileStats.FileName)),
-                           ItemData(IDC_BTN_INPUT_OK, LangString(idInputBoxBtnOK)),
-                           ItemData(IDC_BTN_INPUT_CANCEL, LangString(idInputBoxBtnCancel))]);
+    InputBox.SetItemData([ItemData(IDC_STC_INPUT_LABEL,  LangString(idInputBoxLabel)),
+                          ItemData(IDC_EDT_NEWNAME,      ExtractFileName(FileStats.FileName)),
+                          ItemData(IDC_BTN_INPUT_OK,     LangString(idInputBoxBtnOK)),
+                          ItemData(IDC_BTN_INPUT_CANCEL, LangString(idInputBoxBtnCancel))]);
+    InputBox.OnDialogProc := THandler.InputBoxDialogProc;
     if InputBox.ShowModal = IDOK then
       NewName := InputBox.ItemText[IDC_EDT_NEWNAME];
     FreeAndNil(InputBox);
@@ -718,9 +763,9 @@ begin
 
   if FileStats.FileName <> '' then
     FileProps :=
-      Format(ReportPattProp, [LangString(idPgFileLabelPath), FileStats.FileName]) +
-      Format(ReportPattProp, [LangString(idPgFileLabelSize ), IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '')]) +
-      Format(ReportPattProp, [LangString(idPgFileLabelCreated), IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '')]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelPath),     ExtractFilePath(FileStats.FileName)]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelSize),     IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '')]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelCreated),  IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '')]) +
       Format(ReportPattProp, [LangString(idPgFileLabelModified), IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '')]) +
       IfTh(FileStats.IsModified, '(!) ' + LangString(idPgFileLabelWarnMsgNotSaved))
   else
@@ -929,12 +974,6 @@ begin
       begin
         pProgr := PCountProgress(lParam);
         FileStats.Counters := pProgr.Counters;
-        // thread is not active, change button caption and hide the progress bar
-        if TThreadState(wParam) <> stRunning then
-        begin
-          FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
-          FPages[tabDoc].SetItemVisible(IDC_PGB_PROCESS, False);
-        end;
 
         // change values on the doc page only if it is visible
         if not IsWindowVisible(FPages[tabDoc].DlgHwnd) then Exit;
@@ -1048,6 +1087,7 @@ var ShowWarnMsg: Boolean;
     hdc: Windows.HDC;
     Size: TSize;
     Rect: TRect;
+    Path: string;
 const // determined from user32.dll's resources
   ID_APPLICATION = 100;
   ID_WARNING     = 101;
@@ -1062,20 +1102,21 @@ begin
       begin
         if not FValuesWereSet then // some values might change (during count process) and some might not
         begin
+          Path := ExtractFilePath(FileStats.FileName);
           ItemText[IDC_EDT_FILENAME] := ExtractFileName(FileStats.FileName);
-          ItemText[IDC_EDT_FILEPATH] := FileStats.FileName;
+          ItemText[IDC_EDT_FILEPATH] := Path;
           ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '');
           ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '');
           ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '');
           SendMessage(Item[IDC_EDT_FILENAME], EM_SETMODIFY, WPARAM(False), 0);
           SendMessage(Item[IDC_EDT_FILENAME], EM_SETREADONLY, WPARAM(FileStats.FileName = ''), 0);
-          // check if FileName is longer than "FilePath" edit width and set tooltip if yes
+          // check if path is longer than "FilePath" edit width and set tooltip if yes
           hdc := GetDC(Item[IDC_EDT_FILEPATH]);
-          GetTextExtentPoint(hdc, PChar(FileStats.FileName), Length(FileStats.FileName), Size);
+          GetTextExtentPoint(hdc, PChar(Path), Length(Path), Size);
           ReleaseDC(Item[IDC_EDT_FILEPATH], hdc);
           GetWindowRect(Item[IDC_EDT_FILEPATH], Rect);
           if Size.cx >= Rect.Right - Rect.Left then
-            ItemTooltip[IDC_EDT_FILEPATH] := FileStats.FileName;
+            ItemTooltip[IDC_EDT_FILEPATH] := Path;
           // the content is not saved to file
           if FileStats.FileName = '' then
           begin
@@ -1085,6 +1126,8 @@ begin
             SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiErr), 0);
             ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotAFile);
             ShowWarnMsg := True;
+            EnableWindow(Item[IDC_BTN_COPYPATH], False);
+            EnableWindow(Item[IDC_BTN_BROWSE], False);
           end
           // there are some changes unsaved
           else if FileStats.IsModified then
@@ -1098,8 +1141,8 @@ begin
           end
           else
             ShowWarnMsg := False;
-          SetItemVisible(IDC_IMG_WARNMSG, ShowWarnMsg);
-          SetItemVisible(IDC_STC_WARNMSG, ShowWarnMsg);
+          ItemVisible[IDC_IMG_WARNMSG] := ShowWarnMsg;
+          ItemVisible[IDC_STC_WARNMSG] := ShowWarnMsg;
           FValuesWereSet := True;
         end;
 
@@ -1124,7 +1167,11 @@ begin
         ItemText[IDC_EDT_LATIN]     := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Latin));
         ItemText[IDC_EDT_SURR]      := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Surrogates));
 
-        SetItemVisible(IDC_PGB_PROCESS, FileStats.Counters.State = cntInProcess);
+        // Show progress bar only when counting is running
+        ItemVisible[IDC_PGB_PROCESS] := (FileStats.Counters.State = cntInProcess);
+        ItemText[IDC_BTN_STOP] := IfTh(FileStats.Counters.State = cntInProcess, LangString(idPgDocBtnAbort), LangString(idPgDocBtnCount));
+        // Do not show "Start/stop" button if counting has been successfully completed
+        ItemVisible[IDC_BTN_STOP] := (FileStats.Counters.State <> cntCompleted);
       end;
   end;
 
@@ -1161,12 +1208,12 @@ begin
 
         BN_CLICKED: // Button
           case LoWord(wParam) of
-            // (PageDoc) "Start/stop count" button. Run/stop the thread
+            // (Doc page) "Start/stop count" button. Run/stop the thread
             IDC_BTN_STOP:
               if CountThread.State = stRunning then
               begin
                 CountThread.Stop;
-                SetItemVisible(IDC_PGB_PROCESS, False);
+                ItemVisible[IDC_PGB_PROCESS] := False;
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
                 Res := LRESULT(True);
               end
@@ -1176,29 +1223,29 @@ begin
                 SetValues;
                 CountThread.Run(FOwner.DlgHwnd, AkelData, FileStats);
                 SendMessage(Item[IDC_PGB_PROCESS], PBM_SETPOS, 0, 0);
-                SetItemVisible(IDC_PGB_PROCESS, True);
+                ItemVisible[IDC_PGB_PROCESS] := True;
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
                 Res := LRESULT(True);
               end;
-            // (PageFile) "Copy path" button
+            // (File page) "Copy path" button
             IDC_BTN_COPYPATH:
               CopyPath;
-            // (PageFile) "Browse" button
+            // (File page) "Browse" button
             IDC_BTN_BROWSE:
               Browse;
           end; // case LoWord
 
         EN_CHANGE: // Edit
           case LoWord(wParam) of
-            // (PageFile) "Filename" editor has changed. Show rename hint. Additionally check
+            // (File page) "Filename" editor has changed. Show rename hint. Additionally check
             // "modified" flag as this notification is sent even when nothing changes
             IDC_EDT_FILENAME:
-              SetItemVisible(IDC_STC_RENAMEHINT, SendMessage(Item[IDC_EDT_FILENAME], EM_GETMODIFY, 0, 0) <> 0);
+              ItemVisible[IDC_STC_RENAMEHINT] := (SendMessage(Item[IDC_EDT_FILENAME], EM_GETMODIFY, 0, 0) <> 0);
           end; // case LoWord
 
       end; // case HiWord
 
-    // (PageFile) command from "Filename" edit control: user requested file renaming.
+    // (File page) command from "Filename" edit control: user requested file renaming.
     MSG_RENAME_FILE:
       begin
         if not Rename(ItemText[IDC_EDT_FILENAME]) then Exit;
