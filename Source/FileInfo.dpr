@@ -3,32 +3,43 @@
                          © Fr0sT
 
   Shows properties of a currently edited file as long as some
-  statistics for its contents .
+  statistics for its contents.
   Something similar to Stats plugin but provides more info.
+  Additional functions:
+    + Browse for file in Explorer
+    + Copy path to clipboard
+    + Rename file (!)
+    + Copy statistics to clipboard
 
          *****************************************)
 
 {
+ IN PROGRESS:
+
  TO DO:
-   * parameters
-   * buttons for Browse, Copy path, Open in assoc program, show explorer menu
+   * Report - if selection present
    * Default icon when couldn't get - ?
-   * full report as text
-   * I did a test on this text: Text for test.
-   * - имя файла открыть бы для редактирования, если изменено, пытаться переименовывать
+   * "I did a test on this text: Text for test."
+   * Commands: Open in assoc program, Show explorer menu, System props
+
+ ???
+   * icons for buttons
+   * rename: select only name part (without extension)
+   * error on renaming - clear stats?
 }
 
 library FileInfo;
 
 {$R *.RES}
 {$R 'Dialog.res' 'Dialog.rc'}
-{$R 'Icon.res'}
+{$R Icon.res}
 
 uses
   Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
   IceUtils, ResDialog,
   AkelDLL_h in '#AkelDefs\AkelDLL_h.pas',
-  AkelEdit_h in '#AkelDefs\AkelEdit_h.pas';
+  AkelEdit_h in '#AkelDefs\AkelEdit_h.pas',
+  Lang in 'Lang.pas';
 
 // Global constants
 
@@ -44,13 +55,13 @@ type
                                //   cntNotActual - the values are obsolete and must not be shown
                                //   cntInProcess - the count is running, some values would be shown and some wouldn't
                                //   cntCompleted - the count has finished normally, show all values
-    Lines,                     // Without word wrap
-    Chars,                     // Total chars
-    Words,                     // Words according to Akel settings
-    WhiteSpaces,               // Spaces, tabs, etc
-    Latin,                     // Latin letters
-    Letters,                   // All letters
-    Surrogates                 // Surrogate pairs
+    Lines,                     // without word wrap
+    Chars,                     // total chars
+    Words,                     // according to Akel settings
+    WhiteSpaces,               // spaces, tabs, etc
+    Latin,                     // latin letters
+    Letters,                   // all letters
+    Surrogates                 // surrogate pairs
       : Int64;
   end;
 
@@ -108,147 +119,35 @@ type
   end;
 
 const
-  WordsPerCycle = 1000;  {}
+  WordsPerCycle = 2000;  {}
   CharsPerCycle = 5000;  {}
 
+  MSG_BASE           = WM_APP + $FF0;
   // Count thread -> main dialog window
   //   Update counters.
   //   wParam: TThreadState
-  //   lParam: pointer to TCountProgress record. CountProgress.PercentDone = 100
-  //           means the thread has finished normally
-  MSG_UPD_COUNT = WM_APP + $FF1;
+  //   lParam: pointer to TCountProgress record
+  MSG_UPD_COUNT      = MSG_BASE + 1;
   // Count thread -> main dialog window
   //   Shell icon of the file is extracted, show it
   //   wParam: HICON
   //   lParam: 0
-  MSG_ICON_EXTRACTED = WM_APP + $FF2;
+  MSG_ICON_EXTRACTED = MSG_BASE + 2;
+  // "Filename" edit control -> File props dialog
+  //   User commanded to rename the file
+  MSG_RENAME_FILE    = MSG_BASE + 3;
 
-{$REGION 'Localization'}
-
-// String resources
 type
-  TStringID = 
-  (
-    // dialog window labels and captions
-    idTitleFileProps,
-    idTitleSelProps,
-    idPgFileTitle,
-    idPgDocTitle,
-    idPgFileLabelPath,
-    idPgFileLabelSize,
-    idPgFileLabelCreated,
-    idPgFileLabelModified,
-    idPgFileTextSizePatt,
-    idPgFileLabelWarnMsgNotSaved,
-    idPgFileLabelWarnMsgNotAFile,
-    idPgDocLabelCodePage,
-    idPgDocLabelChars,
-    idPgDocLabelCharsTotal,
-    idPgDocLabelCharsNoSp,
-    idPgDocLabelLines,
-    idPgDocLabelWords,
-    idPgDocLabelLatin,
-    idPgDocLabelLetters,
-    idPgDocLabelSurr,
-    idPgDocBtnCount,
-    idPgDocBtnAbort,
-    idMainBtnOK,
-    //...
-    // messages
-    idMsgGetPropsFail,
-    idMsgShowDlgFail,
-    // other
-    idBla
-  );
-  TLangStrings = array[TStringID] of string;
-  TLangData = record
-    LangId: LANGID;
-    Strings: TLangStrings;
-  end;
+  TPluginCommand = (cmdBrowse, cmdCopyPath, cmdRename, cmdGetReport);
 const
-  LangData: array[1..2] of TLangData =
-  (
-    // ru
-    (
-      LangId: LANG_RUSSIAN;
-      Strings: (
-        'Свойства файла',
-        'Свойства выделенного текста',
-        'Файл',
-        'Текст',
-        'Путь',
-        'Размер',
-        'Создан',
-        'Изменён',
-        '%s байт',
-        'Есть несохранённые изменения',
-        'Документ не сохранён в файл',
-        'Кодировка',
-        'Символы',
-        'всего',
-        'без пробелов',
-        'Строки',
-        'Слова',
-        'Латинские буквы',
-        'Буквы',
-        'Суррогатные пары',
-        'Подсчитать',
-        'Прервать',
-        'ОК',
-        'Ошибка при получении свойств',
-        'Ошибка при показе диалога',
-        'Блабла'
-      );
-    ),
-    // en
-    (
-      LangId: LANG_ENGLISH;
-      Strings: (
-        'File statistics',
-        'Selection statistics',
-        'File',
-        'Text',
-        'Path',
-        'Size',
-        'Created',
-        'Modified',
-        '%s byte(s)',
-        'There are some changes unsaved',
-        'Document is not saved to a file',
-        'Codepage',
-        'Chars',
-        'total',
-        'without spaces',
-        'Lines',
-        'Words',
-        'Latin letters',
-        'Letters',
-        'Surrogate pairs',
-        'Count',
-        'Abort',
-        'OK',
-        'Error retrieving statistics',
-        'Error showing the dialog',
-        'Blabla'
-      );
-    )
-  );
-var
-  CurrLangId: LANGID = LANG_NEUTRAL;
-
-// Returns a string with given ID corresponding to current langID
-function LangString(StrId: TStringID): string;
-var i: Integer;
-begin
-  for i := Low(LangData) to High(LangData) do
-    if LangData[i].LangId = CurrLangId then
-      Exit(LangData[i].Strings[StrId]);
-  // lang ID not found - switch to English and re-run
-  CurrLangId := LANG_ENGLISH;
-  Result := LangString(StrId);
-end;
-
-{$ENDREGION}
+  PluginCommands: array[TPluginCommand] of string =
+    ('browse', 'copypath', 'rename', 'report');
+  BrowseCmd = 'explorer.exe /e, /select, %s';
+  ReportPattProp = '%s: %s'+NL;       // prop name / prop value
+  ReportPattAll = '== %s =='+NL+      // filename / file props / doc props
+                  '%s'+NL+
+                  '*****'+NL+
+                  '%s';
 
 // Interface
 
@@ -295,17 +194,26 @@ var
   CountThread: TCountThread;
   AkelData: TAkelData;
   hiWarn, hiErr: HICON;
+  PrevEditWndProc: TFNWndProc;
+  PluginCommand: TPluginCommand = TPluginCommand(-1);
 
-// ***** SERVICE FUNCTIONS ***** \\
+{$REGION 'SERVICE FUNCTIONS'}
 
 // Retrieve file properties.
-function GetFileInfo(var AkelData: TAkelData; var FileStats: TFileStats): Boolean;
+function GetFileInfo(const AkelData: TAkelData; var FileStats: TFileStats): Boolean;
 var ei: TEDITINFO;
     crInit: TAECHARRANGE;
 begin
+  // clear file info fields
   DestroyIcon(FileStats.hIcon);
-  Finalize(FileStats);
-  ZeroMem(FileStats, SizeOf(FileStats));
+  FileStats.FileName := '';
+  FileStats.FileSize := 0;
+  FileStats.Created := 0;
+  FileStats.Modified := 0;
+  FileStats.hIcon := 0;
+  FileStats.CodePage := 0;
+  FileStats.Selection := False;
+  FileStats.IsModified := False;
 
   ZeroMem(ei, SizeOf(ei));
   if (AkelData.hMainWnd = 0) or
@@ -354,6 +262,7 @@ end;
 // Retrieve document properties.
 // ! Executes in the context of the counter thread !
 // Acts on the basis of CountData.CountState (and changes it when count stage is changing).
+// Based on the Stats plugin code by Instructor
 procedure GetDocInfo(var AkelData: TAkelData; CountCallback: TCountCallback);
 var
   line1, line2, WordCnt, CharCnt, tmp: Integer;
@@ -368,11 +277,12 @@ var
   ciCount: TAECHARINDEX;
   isChars: TAEINDEXSUBTRACT;
   CharsProcessed: Int64;                // how much chars have been already processed
+const
+  PercentPerStage = 100/2;  // how much total percents a single count stage occupies
 
 // Launch the given callback function (if any).
 // Returns False if the process must be interrupted.
 // Uses external variables: CountCallback, CountData, CountProgress
-// Based on the Stats plugin code by Instructor
 function RunCallback: Boolean;
 begin
   Result := True;
@@ -389,13 +299,8 @@ begin
   Inc(CharsProcessed, CharCnt);
   WordCnt := 0;
   CharCnt := 0;
-  // still in progress - get current percent value
-  if CountProgress.PercentDone < 100 then
-  begin
-    CountProgress.PercentDone := Trunc(CharsProcessed*100/CountProgress.Counters.Chars);
-    if CountProgress.PercentDone > 99 then // we'll reach 100% only when AEM_GETNEXTBREAK return 0
-      CountProgress.PercentDone := 99;
-  end;
+  // get current percent value
+  CountProgress.PercentDone := Trunc(PercentPerStage*0 + CharsProcessed*PercentPerStage/CountProgress.Counters.Chars);
   Result := RunCallback;
 end;
 
@@ -406,13 +311,8 @@ begin
   // update the counters
   Inc(CharsProcessed, CharCnt);
   CharCnt := 0;
-  // still in progress - get current percent value
-  if CountProgress.PercentDone < 100 then
-  begin
-    CountProgress.PercentDone := Trunc(CharsProcessed*100/CountProgress.Counters.Chars);
-    if CountProgress.PercentDone > 99 then // we'll reach 100% only when AEM_GETNEXTBREAK return 0
-      CountProgress.PercentDone := 99;
-  end;
+  // get current percent value
+  CountProgress.PercentDone := Trunc(PercentPerStage*1 + CharsProcessed*PercentPerStage/CountProgress.Counters.Chars);
   Result := RunCallback;
 end;
 
@@ -449,7 +349,11 @@ begin
   else
     CountProgress.Counters.Lines := line2 - line1 + 1;
 
-  {}// selection present, if caret is on the 1st char - excess line
+  // If selection is present and caret is on the 1st char of the next line -
+  // excess line appears, remove it from the counter
+  if Selection and AEC_IsFirstCharInLine(crInit.ciMax) then
+    if CountProgress.Counters.Lines > 0 then
+      Dec(CountProgress.Counters.Lines);
 
   // total chars count
   isChars.ciChar1 := @crInit.ciMax;
@@ -458,13 +362,11 @@ begin
   isChars.nNewLine := AELB_ASOUTPUT;
   CountProgress.Counters.Chars := SendMessage(AkelData.hEditWnd, AEM_INDEXSUBTRACT, 0, LPARAM(@isChars));
 
-  CountProgress.PercentDone := 100;
   if not RunCallback then Exit;
 
   // *** word count ***
 
   // init data
-  CountProgress.PercentDone := 0;
   CharsProcessed := 0;
   WordCnt := 0; CharCnt := 0; // how much words/chars we've processed during current cycle
 
@@ -476,13 +378,7 @@ begin
     repeat
       // returns number of characters skipped to the next word
       tmp := SendMessage(AkelData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciCount));
-
-      // EOF - finish the cycle
-      if tmp = 0 then
-      begin
-        CountProgress.PercentDone := 100;
-        Break;
-      end;
+      if tmp = 0 then Break; // EOF - finish the cycle
 
       Inc(CharCnt, tmp);
       Inc(WordCnt);
@@ -506,22 +402,13 @@ begin
     begin
       repeat
         // EOF - finish the cycle
-        if AEC_IndexCompare(crCount.ciMin, crCount.ciMax) >= 0 then
-        begin
-          CountProgress.PercentDone := 100;
-          Break;
-        end;
+        if AEC_IndexCompare(crCount.ciMin, crCount.ciMax) >= 0 then Break;
 
         ciWordEnd := crCount.ciMin;
         repeat
           // returns number of characters skipped to the next word
           tmp := SendMessage(AkelData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
-          // EOF - finish the cycle
-          if tmp = 0 then
-          begin
-            CountProgress.PercentDone := 100;
-            Break;
-          end;
+          if tmp = 0 then Break; // EOF - finish the cycle
 
           // word ends beyond the selection - finish the *inner* cycle
           if not ((ciWordEnd.nLine = crCount.ciMin.nLine) and
@@ -568,12 +455,7 @@ begin
         ciWordEnd := crCount.ciMin;
         // returns number of characters skipped to the next word
         tmp := SendMessage(AkelData.hEditWnd, AEM_GETNEXTBREAK, AEWB_RIGHTWORDEND, LPARAM(@ciWordEnd));
-        // EOF - finish the cycle
-        if (tmp = 0) or (AEC_IndexCompare(ciWordEnd, crCount.ciMax) > 0) then
-        begin
-          CountProgress.PercentDone := 100;
-          Break;
-        end;
+        if (tmp = 0) or (AEC_IndexCompare(ciWordEnd, crCount.ciMax) > 0) then Break; // EOF - finish the cycle
 
         if IsFirst then
         begin
@@ -586,11 +468,7 @@ begin
         else
           Inc(WordCnt);
 
-        if AEC_IndexCompare(ciWordEnd, crCount.ciMax) = 0 then
-        begin
-          CountProgress.PercentDone := 100;
-          Break;
-        end;
+        if AEC_IndexCompare(ciWordEnd, crCount.ciMax) = 0 then Break;  // EOF - finish the cycle
 
         //Next word
         crCount.ciMin := ciWordEnd;
@@ -609,17 +487,11 @@ begin
 
   // init data
   ciCount := crInit.ciMin;
-  CountProgress.PercentDone := 0;
   CharsProcessed := 0;
   CharCnt := 0; // how much words/chars we've processed during current cycle
 
   repeat
-    // EOF - finish the cycle
-    if AEC_IndexCompare(ciCount, crInit.ciMax) >= 0 then
-    begin
-      CountProgress.PercentDone := 100;
-      Break;
-    end;
+    if AEC_IndexCompare(ciCount, crInit.ciMax) >= 0 then Break; // EOF - finish the cycle
 
     if Selection then
       if ciCount.nCharInLine < ciCount.lpLine.nSelStart then
@@ -678,7 +550,204 @@ begin
   ReportCharCount;
 end;
 
-// *** COUNTING THREAD ***
+type
+  TMsgBoxIcon = (iNone, iStop, iQstn, iWarn, iInfo);
+
+// Show message box with standard caption, given text, icon and OK button
+procedure MsgBox(const Txt: string; Icon: TMsgBoxIcon = iNone);
+const
+  MsgBoxIconFlags: array[TMsgBoxIcon] of UINT =
+    (0, MB_ICONHAND, MB_ICONQUESTION, MB_ICONEXCLAMATION, MB_ICONASTERISK);
+var
+  hwndParent: HWND;
+begin
+  // determine parent window
+  if (MainDlg <> nil) and (MainDlg.DlgHwnd <> 0)
+    then hwndParent := MainDlg.DlgHwnd
+    else hwndParent := AkelData.hMainWnd;
+  // show the box, don't care about the result
+  MessageBox(hwndParent, PChar(Txt), PChar(string(PluginName) + ' plugin'), MB_OK + MsgBoxIconFlags[Icon]);
+end;
+
+{$ENDREGION}
+
+{$REGION 'PLUGIN FUNCTIONS'}
+
+// open the file in explorer
+procedure Browse;
+var si: TStartupInfo;
+    pi: TProcessInformation;
+    Cmd: string;
+begin
+  if FileStats.FileName = '' then
+  begin
+    MsgBox(LangString(idPgFileLabelWarnMsgNotAFile), iStop);
+    Exit;
+  end;
+  ZeroMem(pi, SizeOf(pi));
+  ZeroMem(si, SizeOf(si));
+  si.cb := SizeOf(si);
+  Cmd := Format(BrowseCmd, [FileStats.FileName]);
+  CreateProcess(nil, PWideChar(Cmd), nil, nil, False, 0, nil, nil, si, pi);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+end;
+
+// copy full file path to clipboard
+procedure CopyPath;
+begin
+  if FileStats.FileName = '' then
+  begin
+    MsgBox(LangString(idPgFileLabelWarnMsgNotAFile), iStop);
+    Exit;
+  end;
+  CopyTextToCB(FileStats.FileName, AkelData.hMainWnd);
+end;
+
+// rename the current file
+//   NewName - name to rename to (without path). If empty, an InputBox will be shown
+function Rename(NewName: string): Boolean;
+var
+  NewFullName: string;
+  InputBox: TResDialog;
+  hwndParent: HWND;
+  Point64: TPOINT64;
+  Sel: TAESELECTION;
+  Caret: TAECHARINDEX;
+  nCodePage: Integer;
+  bBOM: BOOL;
+  ei: TEDITINFO;
+  od: TOPENDOCUMENT;
+begin
+  Result := False;
+
+  if FileStats.FileName = '' then
+  begin
+    MsgBox(LangString(idPgFileLabelWarnMsgNotAFile), iStop);
+    Exit;
+  end;
+
+  // ask a user for a new file name
+  if NewName = '' then
+  begin
+    if (MainDlg <> nil) and (MainDlg.DlgHwnd <> 0)
+      then hwndParent := MainDlg.DlgHwnd
+      else hwndParent := AkelData.hEditWnd;
+
+    InputBox := TResDialog.Create(IDD_DLG_INPUTBOX, hwndParent);
+    InputBox.Caption := LangString(idInputBoxCaption);
+    InputBox.SetItemData([ ItemData(IDC_STC_INPUT_LABEL, LangString(idInputBoxLabel)),
+                           ItemData(IDC_EDT_NEWNAME, ExtractFileName(FileStats.FileName)),
+                           ItemData(IDC_BTN_INPUT_OK, LangString(idInputBoxBtnOK)),
+                           ItemData(IDC_BTN_INPUT_CANCEL, LangString(idInputBoxBtnCancel))]);
+    if InputBox.ShowModal = IDOK then
+      NewName := InputBox.ItemText[IDC_EDT_NEWNAME];
+    FreeAndNil(InputBox);
+    if NewName = '' then Exit;
+  end;
+
+  // check the new file name
+  NewFullName := ExtractFilePath(FileStats.FileName) + ExtractFileName(NewName); // strip the path from NewName
+  if NewFullName = FileStats.FileName then Exit; // dest = source
+  if FileExists(NewFullName) then
+  begin
+    MsgBox(Format(LangString(idMsgFileExists), [NewFullName]), iStop);
+    Exit;
+  end;
+
+  // Save document state, close it, rename, reopen and reset the saved state.
+  // Based on the RenameFile.js script by Instructor
+
+  // Get document state
+  SendMessage(AkelData.hEditWnd, AEM_GETSCROLLPOS, 0, LPARAM(@Point64));
+  SendMessage(AkelData.hEditWnd, AEM_GETSEL, WPARAM(@Caret), LPARAM(@Sel));
+  if SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, LPARAM(@ei)) <> 0 then
+  begin
+    nCodePage := ei.nCodePage;
+    bBOM := ei.bBOM;
+  end
+  else
+  begin
+    nCodePage := 0;
+    bBOM := False;
+  end;
+
+  // Close
+  if not LongBool(SendMessage(AkelData.hMainWnd, WM_COMMAND, IDM_WINDOW_FILECLOSE, 0)) then Exit;
+
+  // Rename
+  if not MoveFile(PChar(FileStats.FileName), PChar(NewFullName)) then
+  begin
+    MsgBox(LastErrMsg, iStop);
+    Exit;
+  end;
+
+  // Re-open
+  ZeroMem(od, SizeOf(od));
+  od.pFile := PChar(NewFullName);
+  od.nCodePage := nCodePage;
+  od.bBOM := bBOM;
+  SendMessage(AkelData.hMainWnd, AKD_OPENDOCUMENT, 0, LPARAM(@od));
+
+  // Restore document position and selection
+  Sel.dwFlags := Sel.dwFlags or AESELT_LOCKSCROLL or AESELT_INDEXUPDATE;
+  SendMessage(AkelData.hEditWnd, AEM_SETSEL, WPARAM(@Caret), LPARAM(@Sel));
+  SendMessage(AkelData.hEditWnd, AEM_SETSCROLLPOS, 0, LPARAM(@Point64));
+
+  Result := True;
+end;
+
+// We have to use callback to have FileStats updated.
+// We don't care about progress so perform only final assignment
+procedure CountCallback(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
+begin
+  if CountProgress.Counters.State <> cntInProcess then
+    FileStats.Counters := CountProgress.Counters;
+end;
+
+procedure GetReport;
+var
+  FileProps, DocProps, Total: string;
+  CPInfo: TCPInfoEx;
+begin
+  if FileStats.Counters.State <> cntCompleted then
+  begin
+    MsgBox(LangString(idMsgCountNotCompleted));
+    Exit;
+  end;
+
+  if FileStats.FileName <> '' then
+    FileProps :=
+      Format(ReportPattProp, [LangString(idPgFileLabelPath), FileStats.FileName]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelSize ), IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '')]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelCreated), IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '')]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelModified), IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '')]) +
+      IfTh(FileStats.IsModified, '(!) ' + LangString(idPgFileLabelWarnMsgNotSaved))
+  else
+    FileProps := '(Not a file)';
+
+  DocProps :=
+      Format(ReportPattProp, [LangString(idPgDocLabelCodePage), IfTh(GetCPInfoEx(FileStats.CodePage, 0, CPInfo), CPInfo.CodePageName, IntToStr(FileStats.CodePage))]) +
+      LangString(idPgDocLabelChars) + NL +
+      Format(ReportPattProp, [LangString(idPgDocLabelCharsTotal), IntToStr(FileStats.Counters.Chars)]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelCharsNoSp),  IntToStr(FileStats.Counters.Chars - FileStats.Counters.WhiteSpaces)]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelLines),      IntToStr(FileStats.Counters.Lines)]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelWords),      IntToStr(FileStats.Counters.Words)]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelLatin),      IntToStr(FileStats.Counters.Latin)]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelLetters),    IntToStr(FileStats.Counters.Letters)]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelSurr),       IntToStr(FileStats.Counters.Surrogates)]) +
+      '';
+
+  Total := Format(ReportPattAll,
+                  [IfTh(FileStats.FileName = '', '(!) ' + LangString(idPgFileLabelWarnMsgNotAFile), ExtractFileName(FileStats.FileName)),
+                   FileProps, DocProps]);
+
+  CopyTextToCB(Total);
+end;
+
+{$ENDREGION}
+
+{$REGION 'COUNTING THREAD'}
 
 // Broker function allowing to use class method in the API calls
 // lParameter = TCountThread object
@@ -688,7 +757,7 @@ begin
 end;
 
 // broker function allowing to use class method as the GetDocInfo callback
-procedure CountCallbackProc(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
+procedure ThreadCountCallback(var AkelData: TAkelData; var CountProgress: TCountProgress; var Continue: Boolean);
 begin
   CountThread.CountCallback(AkelData, CountProgress, Continue);
 end;
@@ -737,7 +806,7 @@ begin
   SendMessage(FhTargetWnd, MSG_ICON_EXTRACTED, WPARAM(ExtractShellIcon(FFileName)), 0);
 
   // thread cycle
-  GetDocInfo(FAkelData, CountCallbackProc);
+  GetDocInfo(FAkelData, ThreadCountCallback);
 
   // if exiting normally, return "OK", otherwise return error
   Result := IfTh(FState = stTerminated, DWORD(-1), 0);
@@ -750,7 +819,9 @@ begin
   ZeroMem(FAkelData, SizeOf(FAkelData));
 end;
 
-// ***** DIALOGS ***** \\
+{$ENDREGION}
+
+{$REGION 'DIALOGS'}
 
 // TMainDlg
 
@@ -760,8 +831,10 @@ begin
   inherited Create(pd.hInstanceDLL, IDD_DLG_MAIN, pd.hMainWnd);
 
   FAppIcon := pd.hMainIcon;
+  fShowTooltips := True;
 
-  ItemText[IDC_BTN_OK] := LangString(idMainBtnOK);
+  SetItemData([ItemData(IDC_BTN_MAIN_OK, LangString(idMainBtnOK)),
+               ItemData(IDC_BTN_REPORT, LangString(idMainBtnReport), LangString(idMainBtnReportTip))]);
   FTabPageCaptions[tabFile] := LangString(idPgFileTitle);
   FTabPageCaptions[tabDoc] := LangString(idPgDocTitle);
 
@@ -835,8 +908,7 @@ begin
             begin
               hwndTab := Item[NotifyHdr.idFrom];
               pg := TTabPage(SendMessage(hwndTab, TCM_GETCURSEL, 0, 0));
-              if not FPages[pg].Show(SW_HIDE) then
-                MsgBox(LastErrMsg);
+              FPages[pg].Show(SW_HIDE);
               Res := LRESULT(False); // must return false to allow page change
             end;
           // page was changed, show the current page
@@ -844,8 +916,7 @@ begin
             begin
               hwndTab := Item[NotifyHdr.idFrom];
               pg := TTabPage(SendMessage(hwndTab, TCM_GETCURSEL, 0, 0));
-              if not FPages[pg].Show(SW_SHOW) then
-                MsgBox(LastErrMsg);
+              FPages[pg].Show(SW_SHOW);
               FPages[pg].SetValues;
               Res := LRESULT(True);
             end;
@@ -862,7 +933,7 @@ begin
         if TThreadState(wParam) <> stRunning then
         begin
           FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
-          ShowWindow(FPages[tabDoc].Item[IDC_PGB_PROCESS], SW_HIDE);
+          FPages[tabDoc].SetItemVisible(IDC_PGB_PROCESS, False);
         end;
 
         // change values on the doc page only if it is visible
@@ -877,15 +948,48 @@ begin
     MSG_ICON_EXTRACTED:
       begin
         FileStats.hIcon := HICON(wParam);
-        FPages[tabFile].SetValues;
+        if IsWindowVisible(FPages[tabFile].DlgHwnd) then
+          FPages[tabFile].SetValues;
       end;
 
+    // notifications from child controls
     WM_COMMAND:
-      begin
-
+      case HiWord(wParam) of
+        BN_CLICKED:
+          case LoWord(wParam) of
+            // "Report" button
+            IDC_BTN_REPORT: GetReport;
+          end;
       end;
 
   end; // case msg
+end;
+
+// Custom handler for "Filename" edit control which handles Ctrl-S combination.
+// This is the only way of catching keyboard events as for dialog boxes OS hides
+// it completely (WM_CHAR won't arrive to DlgProc).
+function FileNameEditWndProc(hWnd: HWND; msg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
+var ks: TKeyboardState;
+begin
+  case msg of
+    WM_KEYDOWN:
+      if Char(wParam) = 'S' then
+      begin
+        // check modifiers state
+        GetKeyboardState(ks);
+        if (ks[VK_CONTROL] and $80 <> 0) and
+           (ks[VK_MENU] and $80 = 0) and (ks[VK_SHIFT] and $80 = 0) and
+           (ks[VK_LWIN] and $80 = 0) and (ks[VK_RWIN] and $80 = 0)
+        then
+          // if edit is modified, send command to the parent dialog
+          if SendMessage(hWnd, EM_GETMODIFY, 0, 0) <> 0 then
+          begin
+            PostMessage(GetParent(hWnd), MSG_RENAME_FILE, 0, 0);
+            Exit(0);
+          end;
+      end;
+  end;
+  Result := CallWindowProc(PrevEditWndProc, hWnd, Msg, wParam, lParam);
 end;
 
 // TPageDlg
@@ -895,15 +999,19 @@ begin
   inherited Create(pd.hInstanceDLL, TabPageIDs[Page], pd.hMainWnd);
   FOwner := Owner;
   FPage := Page;
+  fShowTooltips := True;
   case FPage of
     tabFile:
         SetItemData([
-              ItemData(IDC_STC_FILEPATH, LangString(idPgFileLabelPath)),
-              ItemData(IDC_STC_FILESIZE, LangString(idPgFileLabelSize)),
-              ItemData(IDC_STC_CREATED,  LangString(idPgFileLabelCreated)),
-              ItemData(IDC_STC_MODIFIED, LangString(idPgFileLabelModified)),
-
-              ItemData(IDC_EDT_FILENAME, ''),
+              ItemData(IDC_STC_RENAMEHINT, LangString(idPgFileLabelRenameHint)),
+              ItemData(IDC_STC_FILEPATH,   LangString(idPgFileLabelPath)),
+              ItemData(IDC_STC_FILESIZE,   LangString(idPgFileLabelSize)),
+              ItemData(IDC_STC_CREATED,    LangString(idPgFileLabelCreated)),
+              ItemData(IDC_STC_MODIFIED,   LangString(idPgFileLabelModified)),
+              ItemData(IDC_BTN_COPYPATH,   LangString(idPgFileBtnCopyPath), LangString(idPgFileBtnCopyPathTip)),
+              ItemData(IDC_BTN_BROWSE,     LangString(idPgFileBtnBrowse), LangString(idPgFileBtnBrowseTip)),
+              // just to have these items allocated
+              ItemData(IDC_EDT_FILENAME, '', LangString(idPgFileTextFileNameTip)),
               ItemData(IDC_EDT_FILEPATH, ''),
               ItemData(IDC_EDT_CREATED, ''),
               ItemData(IDC_EDT_MODIFIED, '')
@@ -920,7 +1028,7 @@ begin
               ItemData(IDC_STC_LETTERS,   LangString(idPgDocLabelLetters)),
               ItemData(IDC_STC_SURR,      LangString(idPgDocLabelSurr)),
               ItemData(IDC_BTN_STOP,      LangString(idPgDocBtnCount)),
-
+              // just to have these items allocated
               ItemData(IDC_EDT_CODEPAGE,  ''),
               ItemData(IDC_EDT_CHARSTOT,  ''),
               ItemData(IDC_EDT_CHARSNOSP, ''),
@@ -937,6 +1045,9 @@ end;
 procedure TPageDlg.SetValues;
 var ShowWarnMsg: Boolean;
     CPInfo: TCPInfoEx;
+    hdc: Windows.HDC;
+    Size: TSize;
+    Rect: TRect;
 const // determined from user32.dll's resources
   ID_APPLICATION = 100;
   ID_WARNING     = 101;
@@ -956,13 +1067,21 @@ begin
           ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '');
           ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '');
           ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '');
+          SendMessage(Item[IDC_EDT_FILENAME], EM_SETMODIFY, WPARAM(False), 0);
+          SendMessage(Item[IDC_EDT_FILENAME], EM_SETREADONLY, WPARAM(FileStats.FileName = ''), 0);
+          // check if FileName is longer than "FilePath" edit width and set tooltip if yes
+          hdc := GetDC(Item[IDC_EDT_FILEPATH]);
+          GetTextExtentPoint(hdc, PChar(FileStats.FileName), Length(FileStats.FileName), Size);
+          ReleaseDC(Item[IDC_EDT_FILEPATH], hdc);
+          GetWindowRect(Item[IDC_EDT_FILEPATH], Rect);
+          if Size.cx >= Rect.Right - Rect.Left then
+            ItemTooltip[IDC_EDT_FILEPATH] := FileStats.FileName;
           // the content is not saved to file
           if FileStats.FileName = '' then
           begin
             if hiErr = 0 then
               hiErr := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_ERROR),
-                                 IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
-                                 LR_DEFAULTCOLOR);
+                                 IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
             SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiErr), 0);
             ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotAFile);
             ShowWarnMsg := True;
@@ -972,18 +1091,18 @@ begin
           begin
             if hiWarn = 0 then
               hiWarn := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_WARNING),
-                                 IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
-                                 LR_DEFAULTCOLOR);
+                                 IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
             SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiWarn), 0);
             ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotSaved);
             ShowWarnMsg := True;
           end
           else
             ShowWarnMsg := False;
-          ShowWindow(Item[IDC_IMG_WARNMSG], IfTh(ShowWarnMsg, SW_SHOW, SW_HIDE));
-          ShowWindow(Item[IDC_STC_WARNMSG], IfTh(ShowWarnMsg, SW_SHOW, SW_HIDE));
+          SetItemVisible(IDC_IMG_WARNMSG, ShowWarnMsg);
+          SetItemVisible(IDC_STC_WARNMSG, ShowWarnMsg);
           FValuesWereSet := True;
         end;
+
         // update these values always
         SendMessage(Item[IDC_IMG_FILEICON], STM_SETICON, WPARAM(FileStats.hIcon), 0);
       end;
@@ -1005,7 +1124,7 @@ begin
         ItemText[IDC_EDT_LATIN]     := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Latin));
         ItemText[IDC_EDT_SURR]      := IfTh(FileStats.Counters.State <> cntNotActual, ThousandsDivide(FileStats.Counters.Surrogates));
 
-        ShowWindow(Item[IDC_PGB_PROCESS], IfTh(FileStats.Counters.State = cntInProcess, SW_SHOW, SW_HIDE));
+        SetItemVisible(IDC_PGB_PROCESS, FileStats.Counters.State = cntInProcess);
       end;
   end;
 
@@ -1027,6 +1146,10 @@ begin
         SetWindowPos(DlgHwnd, 0, TabClientArea.Left, TabClientArea.Top,
                      TabClientArea.Right - TabClientArea.Left, TabClientArea.Bottom - TabClientArea.Top,
                      SWP_NOZORDER);
+        // subclass edit control to catch keyboard events
+        if FPage = tabFile then
+          PrevEditWndProc := TFNWndProc(SetWindowLongPtr(Item[IDC_EDT_FILENAME], GWLP_WNDPROC,
+                                                         LONG_PTR(@FileNameEditWndProc)));
       end;
 
     RDM_DLGCLOSED:
@@ -1035,14 +1158,15 @@ begin
     // notification from control
     WM_COMMAND:
       case HiWord(wParam) of
-        BN_CLICKED:
-          case LOWORD(wParam) of
-            // start/stop counting button
+
+        BN_CLICKED: // Button
+          case LoWord(wParam) of
+            // (PageDoc) "Start/stop count" button. Run/stop the thread
             IDC_BTN_STOP:
               if CountThread.State = stRunning then
               begin
                 CountThread.Stop;
-                ShowWindow(Item[IDC_PGB_PROCESS], SW_HIDE);
+                SetItemVisible(IDC_PGB_PROCESS, False);
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnCount);
                 Res := LRESULT(True);
               end
@@ -1052,29 +1176,88 @@ begin
                 SetValues;
                 CountThread.Run(FOwner.DlgHwnd, AkelData, FileStats);
                 SendMessage(Item[IDC_PGB_PROCESS], PBM_SETPOS, 0, 0);
-                ShowWindow(Item[IDC_PGB_PROCESS], SW_SHOW);
+                SetItemVisible(IDC_PGB_PROCESS, True);
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
                 Res := LRESULT(True);
               end;
-          end;
+            // (PageFile) "Copy path" button
+            IDC_BTN_COPYPATH:
+              CopyPath;
+            // (PageFile) "Browse" button
+            IDC_BTN_BROWSE:
+              Browse;
+          end; // case LoWord
+
+        EN_CHANGE: // Edit
+          case LoWord(wParam) of
+            // (PageFile) "Filename" editor has changed. Show rename hint. Additionally check
+            // "modified" flag as this notification is sent even when nothing changes
+            IDC_EDT_FILENAME:
+              SetItemVisible(IDC_STC_RENAMEHINT, SendMessage(Item[IDC_EDT_FILENAME], EM_GETMODIFY, 0, 0) <> 0);
+          end; // case LoWord
+
+      end; // case HiWord
+
+    // (PageFile) command from "Filename" edit control: user requested file renaming.
+    MSG_RENAME_FILE:
+      begin
+        if not Rename(ItemText[IDC_EDT_FILENAME]) then Exit;
+        // refresh file props
+        GetFileInfo(AkelData, FileStats);
+        FileStats.hIcon := ExtractShellIcon(FileStats.FileName);
+        FValuesWereSet := False;
+        SetValues;
       end;
-  end;
+
+  end; // case msg
 end;
 
-// ***** MAIN PLUGIN FUNCTIONS ***** \\
+{$ENDREGION}
+
+{$REGION 'MAIN PLUGIN FUNCTIONS'}
 
 // initialize stuff with given PLUGINDATA members
 procedure Init(var pd: TPLUGINDATA);
+// Parameters for current call are kept in the following form:
+//   pd.lParam - pointer to array of INT_PTR (let's call it Params)
+//   Params[0] = size of the whole array in bytes including the 0-th element itself.
+//               So Length(Params) = Params[0] div SizeOf(INT_PTR), ParamCount = Length(Params) - 1
+//   Params[1] = pointer to parameter string OR the value of numerical parameter
+//   ...
+type
+  TAkelParams = array[0..$FFFF] of INT_PTR;
+  PAkelParams = ^TAkelParams;
+var
+  AkelParams: PAkelParams;
+  sCmd: string;
+  TmpCmd: TPluginCommand;
 begin
-  CurrLangId := PRIMARYLANGID(pd.wLangModule);
   ZeroMem(AkelData, SizeOf(AkelData));
   AkelData.hMainWnd := pd.hMainWnd;
   AkelData.hEditWnd := pd.hWndEdit;
+  SetCurrLang(PRIMARYLANGID(pd.wLangModule));
 
-  MainDlg := TMainDlg.Create(pd);
-  MainDlg.Persistent := True;
+  // check for parameter
+  AkelParams := PAkelParams(pd.lParam);
+  if (AkelParams <> nil) and (AkelParams^[0] div SizeOf(INT_PTR) - 1 = 1) then
+  begin
+    sCmd := string(PChar(AkelParams^[1])); // returns empty string if parameter is NULL
+    // determine command
+    for TmpCmd := Low(TPluginCommand) to High(TPluginCommand) do
+      if sCmd = PluginCommands[TmpCmd] then
+      begin
+        PluginCommand := TmpCmd;
+        Break;
+      end;
+  end;
 
-  CountThread := TCountThread.Create;
+  // create dialog and thread only when no command specified
+  if PluginCommand = TPluginCommand(-1) then
+  begin
+    MainDlg := TMainDlg.Create(pd);
+    MainDlg.Persistent := True;
+    CountThread := TCountThread.Create;
+  end;
 
   //...
 end;
@@ -1088,11 +1271,24 @@ begin
     Exit;
   end;
 
-  if MainDlg.ShowModal = -1 then
-  begin
-    MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
-    Exit;
-  end;
+  // execute command
+  case PluginCommand of
+    cmdBrowse:
+      Browse;
+    cmdCopyPath:
+      CopyPath;
+    cmdRename:
+      Rename('');
+    cmdGetReport:
+      begin
+        GetDocInfo(AkelData, CountCallback);
+        GetReport;
+      end;
+    // no command specified - show GUI and launch thread
+    else
+      if MainDlg.ShowModal = -1 then
+        MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
+  end; // case command
 end;
 
 // cleanup
@@ -1104,8 +1300,9 @@ begin
   // SendMessage calls from GetDocInfo to the edit window cause deadlock.
   // By executing message processing manually here we launch main message loop
   // again and again until the thread is finished.
-  while CountThread.State <> stInactive do
-    MainDlg.ProcessMessages;
+  if CountThread <> nil then
+    while CountThread.State <> stInactive do
+      MainDlg.ProcessMessages;
 
   FreeAndNil(CountThread);
   DestroyIcon(FileStats.hIcon);
@@ -1139,7 +1336,6 @@ begin
 
   // Cleanup
   Finish;
-
 end;
 
 // Entry point
@@ -1152,6 +1348,8 @@ begin
     DLL_THREAD_DETACH:  ;
   end;
 end;
+
+{$ENDREGION}
 
 exports
   DllAkelPadID,

@@ -23,9 +23,10 @@ uses Windows, Messages, CommCtrl;
 // псевдо-сообщения, которые отправляются в обработчик OnDialogProc после
 // создания, перед уничтожением и после уничтожения окна соответственно
 const
-  RDM_DLGOPENING = WM_APP + $F1;
-  RDM_DLGCLOSING = WM_APP + $F2;
-  RDM_DLGCLOSED  = WM_APP + $F3;
+  RDM_BASE       = WM_APP   + $F0;
+  RDM_DLGOPENING = RDM_BASE + 1;
+  RDM_DLGCLOSING = RDM_BASE + 2;
+  RDM_DLGCLOSED  = RDM_BASE + 3;
 
 type
   // See "Tooltip Styles" and uFlags member of the TOOLINFO structure in MSDN for description
@@ -72,17 +73,17 @@ type
     procedure SetCaption(val: string);
     procedure SetPersistent(val: Boolean);
     procedure SetParent(ParentHwnd: HWND);
-    procedure SetDlgItemText(ID: Integer; What: Integer; const Text: string);
+    procedure SetItemText(ID: Integer; What: Integer; const Text: string);
     // getters
-    function GetDlgItem(ID: Integer): HWND;
-    function GetDlgItemText(ID: Integer; What: Integer): string;
+    function GetItem(ID: Integer): HWND;
+    function GetItemText(ID: Integer; What: Integer): string;
     // методы
     procedure SetBufSize(Size: Cardinal);
     function Load: Boolean;
     function IndexOf(ID: Integer): Integer;
-    procedure InternalAddItemTooltip(ID: Integer; const Tooltip: string);
-    procedure InternalSetDlgItemText(ID: Integer; const Text: string);
-    function InternalGetDlgItemText(ID: Integer): string;
+    procedure InternalSetItemTooltip(ID: Integer; const Tooltip: string);
+    procedure InternalSetItemText(ID: Integer; const Text: string);
+    function InternalGetItemText(ID: Integer): string;
     // Обработчики, вызываемые в моментах между созданием окна и показом его на экране и
     // между скрытием и уничтожением соответственно. Потомки должны перекрывать их для
     // выполнения своих действий над окном и контролами
@@ -125,6 +126,7 @@ type
     destructor Destroy; override;
 
     procedure SetItemData(const ItemData: array of TDlgItemData);
+    procedure SetItemVisible(ID: Integer; Visible: Boolean);
     function Show(ShowCmd: Integer = SW_NORMAL): Boolean;
     function ShowModal: INT_PTR;
     procedure ProcessMessages;
@@ -136,9 +138,9 @@ type
     property Persistent: Boolean           read fPersistent    write SetPersistent;
     property ShowTooltips: Boolean         read fShowTooltips  write fShowTooltips;
 
-    property Item[ID: Integer]: HWND                          read GetDlgItem;
-    property ItemText[ID: Integer]: string    index CODE_TEXT read GetDlgItemText write SetDlgItemText;
-    property ItemTooltip[ID: Integer]: string index CODE_TTIP read GetDlgItemText write SetDlgItemText;
+    property Item[ID: Integer]: HWND                          read GetItem;
+    property ItemText[ID: Integer]: string    index CODE_TEXT read GetItemText write SetItemText;
+    property ItemTooltip[ID: Integer]: string index CODE_TTIP read GetItemText write SetItemText;
   end;
 
 function ItemData(ID: Integer; const Text: string; const Tooltip: string = ''): TDlgItemData; inline;
@@ -312,7 +314,7 @@ begin
           SetWindowText(fDlgHwnd, PChar(fCaption));
         // ставим надписи контролов
         for i := Low(fItemData) to High(fItemData) do
-          InternalSetDlgItemText(fItemData[i].ID, fItemData[i].Text);
+          InternalSetItemText(fItemData[i].ID, fItemData[i].Text);
         // создаем окно тултипов и добавляем элементы
         if fShowTooltips then
         begin
@@ -328,7 +330,7 @@ begin
           // добавляем все контролы с непустыми тултипами
           for i := Low(fItemData) to High(fItemData) do
             if fItemData[i].Tooltip <> '' then
-              InternalAddItemTooltip(fItemData[i].ID, fItemData[i].Tooltip);
+              InternalSetItemTooltip(fItemData[i].ID, fItemData[i].Tooltip);
         end;
         DoBeforeShow;
         Result := LRESULT(True);
@@ -344,7 +346,7 @@ begin
         // если не отмена, получаем значения контролов
         if LOWORD(wParam) <> IDCANCEL then
           for i := Low(fItemData) to High(fItemData) do
-            fItemData[i].Text := InternalGetDlgItemText(fItemData[i].ID);
+            fItemData[i].Text := InternalGetItemText(fItemData[i].ID);
         Allow := True;
         DoBeforeClose(Allow, LOWORD(wParam));
         if not Allow then Exit;
@@ -384,24 +386,30 @@ begin
   Result := -1;
 end;
 
-// процедура для добавления тултипа с указанным текстом на контрол с указанным ID
-procedure TResDialog.InternalAddItemTooltip(ID: Integer; const Tooltip: string);
+// Добавляет тултип с текстом Tooltip для контрола с идентификатором ID.
+// Если Tooltip - пустая строка, удаляет контрол из списка.
+procedure TResDialog.InternalSetItemTooltip(ID: Integer; const Tooltip: string);
 var ti: TToolInfo;
     Flags: UINT;
     flag: TTooltipStyle;
 begin
   FillChar(ti, SizeOf(ti), 0);
   ti.cbSize := SizeOf(ti);
-  Flags := TTF_IDISHWND or TTF_SUBCLASS; // необходимые флаги
-  // перебираем дополнительные стили, и если они из списка флагов, добавляем в итоговое значение
-  for flag in TooltipStyles do
-    if flag in TooltipFlagSet then
-      Flags := Flags or TooltipStyleValues[flag];
-  ti.uFlags := Flags;
   ti.hwnd := fDlgHwnd;
   ti.uId := Item[ID];
-  ti.lpszText := PChar(Tooltip);
-  SendMessage(fTooltipHwnd, TTM_ADDTOOL, 0, Windows.LPARAM(@ti));
+  if Tooltip <> '' then
+  begin
+    Flags := TTF_IDISHWND or TTF_SUBCLASS; // необходимые флаги
+    // перебираем дополнительные стили, и если они из списка флагов, добавляем в итоговое значение
+    for flag in TooltipStyles do
+      if flag in TooltipFlagSet then
+        Flags := Flags or TooltipStyleValues[flag];
+    ti.uFlags := Flags;
+    ti.lpszText := PChar(Tooltip);
+    SendMessage(fTooltipHwnd, TTM_ADDTOOL, 0, LPARAM(@ti));
+  end
+  else
+    SendMessage(fTooltipHwnd, TTM_DELTOOL, 0, LPARAM(@ti));
 end;
 
 // функция для получения текста из контрола диалога
@@ -412,7 +420,7 @@ end;
 // нулевой символ, поэтому нельзя использовать SetString(CharLen). Для универсальности
 // сделано так: буфер выделяется заведомо больше на 1 символ, а для присваивания
 // используется PChar, который берёт все символы до нулевого включительно.
-function TResDialog.InternalGetDlgItemText(ID: Integer): string;
+function TResDialog.InternalGetItemText(ID: Integer): string;
 var CharLen: Cardinal;
     pDest: PChar;
 begin
@@ -421,15 +429,15 @@ begin
   // расширяем буфер на строку и в любом случае заполняем весь буфер нулями
   SetBufSize(CharLen*SizeOf(Char));
   pDest := PChar(fBuf);
-  Windows.GetDlgItemText(fDlgHwnd, ID, pDest, CharLen);
+  GetDlgItemText(fDlgHwnd, ID, pDest, CharLen);
   (pDest+CharLen-1)^ := #0; // чтобы уж наверняка!!
   Result := pDest;
 end;
 
 // процедура для установки текста контролу
-procedure TResDialog.InternalSetDlgItemText(ID: Integer; const Text: string);
+procedure TResDialog.InternalSetItemText(ID: Integer; const Text: string);
 begin
-  Windows.SetDlgItemText(fDlgHwnd, ID, PChar(Text));
+  SetDlgItemText(fDlgHwnd, ID, PChar(Text));
 end;
 
 // присвоение заголовка окна; если диалог запущен, сразу и ставит его
@@ -443,14 +451,14 @@ end;
 
 // Получение текста контрола, заданного через идентификатор.
 // Если диалог открыт, сперва получает текст из контрола.
-function TResDialog.GetDlgItemText(ID: Integer; What: Integer): string;
+function TResDialog.GetItemText(ID: Integer; What: Integer): string;
 var idx: Integer;
 begin
   idx := IndexOf(ID);
   if idx <> -1 then
   begin
     if fDlgHwnd <> 0 then
-      fItemData[idx].Text := InternalGetDlgItemText(fItemData[idx].ID);
+      fItemData[idx].Text := InternalGetItemText(fItemData[idx].ID);
     Result := fItemData[idx].Text;
   end
   else
@@ -460,7 +468,7 @@ end;
 // Установка текста контрола, заданного через идентификатор.
 // Если диалог открыт, сразу меняет текст на контроле.
 // Если в массиве данных с таким ID нет, добавляет новый элемент.
-procedure TResDialog.SetDlgItemText(ID: Integer; What: Integer; const Text: string);
+procedure TResDialog.SetItemText(ID: Integer; What: Integer; const Text: string);
 var idx: Integer;
 begin
   idx := IndexOf(ID);
@@ -477,13 +485,13 @@ begin
       begin
         fItemData[idx].Text := Text;
         if fDlgHwnd <> 0 then
-          InternalSetDlgItemText(fItemData[idx].ID, fItemData[idx].Text);
+          InternalSetItemText(fItemData[idx].ID, fItemData[idx].Text);
       end;
     CODE_TTIP:
       begin
         fItemData[idx].Tooltip := Text;
         if fTooltipHwnd <> 0 then
-          InternalAddItemTooltip(fItemData[idx].ID, fItemData[idx].Tooltip);
+          InternalSetItemTooltip(fItemData[idx].ID, fItemData[idx].Tooltip);
       end;
   end;
 end;
@@ -504,10 +512,23 @@ begin
   for i := Low(ItemData) to High(ItemData) do
   begin
     fItemData[i] := ItemData[i];
-    InternalSetDlgItemText(fItemData[i].ID, fItemData[i].Text);
+    InternalSetItemText(fItemData[i].ID, fItemData[i].Text);
+    // Если окно тултипов существует - добавить элемент. Выполняется даже для
+    // пустых тултипов, чтобы иметь возможность очистить тултип.
     if fTooltipHwnd <> 0 then
-      InternalAddItemTooltip(fItemData[i].ID, fItemData[i].Tooltip);
+      InternalSetItemTooltip(fItemData[i].ID, fItemData[i].Tooltip);
   end;
+end;
+
+// показ/скрытие элемента
+procedure TResDialog.SetItemVisible(ID: Integer; Visible: Boolean);
+var hItem: HWND;
+begin
+  hItem := Item[ID];
+  if hItem = 0 then Exit;
+  if Visible
+    then ShowWindow(hItem, SW_SHOW)
+    else ShowWindow(hItem, SW_HIDE);
 end;
 
 // Смена родительского окна
@@ -553,9 +574,9 @@ begin
 end;
 
 // Get window handle of a dialog item by ID. Just a simple wrapper to make DlgItem property
-function TResDialog.GetDlgItem(ID: Integer): HWND;
+function TResDialog.GetItem(ID: Integer): HWND;
 begin
-  Result := Windows.GetDlgItem(fDlgHwnd, ID);
+  Result := GetDlgItem(fDlgHwnd, ID);
 end;
 
 // Stubs that launch event handlers

@@ -1,6 +1,5 @@
 *****************************************************************
 ***              FileInfo AkelPad plugin                      ***
-***                     BETA VERSION !!!                      ***
 *****************************************************************
 
 2012 Fr0sT
@@ -12,6 +11,7 @@ Extended analogue of the Stats plugin.
 Shows info about opened file:
 	- name
 	- full path
+	- system icon
 	- size
 	- creation and modification dates
 and document statistics - counts of:
@@ -19,17 +19,23 @@ and document statistics - counts of:
 	- characters
 	- words
 	- characters without spaces
-	- latin letters
 	- total letters
+	- latin letters
 	- surrogate pairs
 
 If there's selection present, shows statistics only for it
+Also allows performing additional commands upon the current file:
+	- Browse in Explorer
+	- Copy full path to clipboard
+	- Rename
+	- Copy statistics to clipboard
+
 
 *** Features ***
 
-*	Uses background thread for counting - doesn't freeze on large files
-*	Russian and english localization included
-*	Much more features coming soon
+	+ Uses background thread for counting - doesn't freeze on large files
+	+ Additional commands
+
 
 *** Functions ***
 
@@ -37,7 +43,21 @@ FileInfo::Main
 Main function.
 
 
+*** External call FileInfo::Main ***
+
+Call("ContextMenu::Main"[, "STRING"])
+  Parameters:
+    STRING
+      Command (optional).
+      If command is present, dialog won't be shown and plugin will be finished right after performing the command. Following commands are supported:
+        browse - browse for current file in Explorer
+        copypath - copy full path to clipboard
+        rename - rename file (you will be prompted for a new name with dialog)
+        report - copy file statistics to clipboard
+
+
 *** Credits ***
 
 Statistics counting code is based on the Stats plugin © Shengalts Aleksander aka Instructor (Shengalts@mail.ru)
+File renaming code is based on the RenameFile.js script © Shengalts Aleksander aka Instructor (Shengalts@mail.ru)
 Icon designed by Oxygen Team (http://www.oxygen-icons.org)

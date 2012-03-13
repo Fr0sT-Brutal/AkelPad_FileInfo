@@ -3,7 +3,7 @@
 			<ProjectGuid>{D0745573-728E-4128-8268-4208B0F2A62A}</ProjectGuid>
 			<ProjectVersion>12.0</ProjectVersion>
 			<MainSource>FileInfo.dpr</MainSource>
-			<Config Condition="'$(Config)'==''">Release</Config>
+			<Config Condition="'$(Config)'==''">Debug</Config>
 			<DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
@@ -20,6 +20,8 @@
 			<Base>true</Base>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Base)'!=''">
+			<DCC_UsePackage>vclx;vcl;rtl;vclactnband;xmlrtl;vclimg;VclSmp;vclribbon;OverbyteIcsD2010Run;VirtualTreesR;dbrtl;vcldb;vclAbsDBd13;EhLib90;sdlgeopack_97R7;sdlgeopack_rt_97R7;sdlmathpack_rt_97R7;sdlbasepack_rt_97R7;adortl;sdlmathpack_97R7;dsnap</DCC_UsePackage>
+			<DCC_Define>lang_RU;$(DCC_Define)</DCC_Define>
 			<BRCC_CompilerToUse>rc</BRCC_CompilerToUse>
 			<GenDll>true</GenDll>
 			<DCC_UnitSearchPath>#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
@@ -52,6 +54,7 @@
 			</RcCompile>
 			<DCCReference Include="#AkelDefs\AkelDLL_h.pas"/>
 			<DCCReference Include="#AkelDefs\AkelEdit_h.pas"/>
+			<DCCReference Include="Lang.pas"/>
 			<BuildConfiguration Include="Base">
 				<Key>Base</Key>
 			</BuildConfiguration>
@@ -83,7 +86,7 @@
 						<VersionInfo Name="IncludeVerInfo">True</VersionInfo>
 						<VersionInfo Name="AutoIncBuild">False</VersionInfo>
 						<VersionInfo Name="MajorVer">0</VersionInfo>
-						<VersionInfo Name="MinorVer">3</VersionInfo>
+						<VersionInfo Name="MinorVer">4</VersionInfo>
 						<VersionInfo Name="Release">10</VersionInfo>
 						<VersionInfo Name="Build">0</VersionInfo>
 						<VersionInfo Name="Debug">False</VersionInfo>
@@ -97,7 +100,7 @@
 					<VersionInfoKeys>
 						<VersionInfoKeys Name="CompanyName"/>
 						<VersionInfoKeys Name="FileDescription">AkelPad (x86) text editor plugin</VersionInfoKeys>
-						<VersionInfoKeys Name="FileVersion">0.3.10.0</VersionInfoKeys>
+						<VersionInfoKeys Name="FileVersion">0.4.10.0</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName"/>
 						<VersionInfoKeys Name="LegalCopyright">Fr0sT</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalTrademarks"/>
@@ -107,7 +110,7 @@
 						<VersionInfoKeys Name="Comments"/>
 					</VersionInfoKeys>
 					<Excluded_Packages>
-						<Excluded_Packages Name="$(BDS)\Userdir\Bpl\FavsExp.bpl">File d:\coding\ide\rad2010\Userdir\Bpl\FavsExp.bpl not found</Excluded_Packages>
+						<Excluded_Packages Name="$(BDS)\Userdir\Bpl\cefcomponent.bpl">(untitled)</Excluded_Packages>
 						<Excluded_Packages Name="$(BDS)\bin\dclofficexp140.bpl">Microsoft Office XP Sample Automation Server Wrapper Components</Excluded_Packages>
 						<Excluded_Packages Name="$(BDS)\bin\bcbie140.bpl">Embarcadero C++Builder Internet Explorer Components Package</Excluded_Packages>
 						<Excluded_Packages Name="$(BDS)\bin\dcl31w140.bpl">Delphi 1.0 Compatibility Components</Excluded_Packages>

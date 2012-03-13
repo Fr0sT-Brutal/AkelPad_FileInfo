@@ -5,32 +5,12 @@ interface
 uses SysUtils, Windows, Messages;
 
 type
-  // для применения в MessageBox их надо сдвинуть на 16 влево
-  // MB_ICONHAND = $00000010;
-  // MB_ICONQUESTION = $00000020;
-  // MB_ICONEXCLAMATION = $00000030;
-  // MB_ICONASTERISK = $00000040;
-  TMsgBoxIcon = (iNone, iStop, iQstn, iWarn, iInfo);
 
   TTimeScale = (tsSys, tsLoc); // шкала времени для FileTime функций: локальная/UTC
 
 const
-  MsgBoxTitles: array [TMsgBoxIcon] of string = ('','Ошибка!','Вопрос','Внимание!','Информация');
-
-  bARI = MB_ABORTRETRYIGNORE;
-  bOK  = MB_OK;
-  bOC  = MB_OKCANCEL;
-  bRC  = MB_RETRYCANCEL;
-  bYN  = MB_YESNO;
-  bYNC = MB_YESNOCANCEL;
-
   NL = #13#10;
 
-  // dialog windows
-  function MsgBox(               const txt: string; style: Integer=bOK): Integer; overload;
-  function MsgBox(Hwnd: THandle; const txt: string; style: Integer=bOK): Integer; overload;
-  function MsgBox(               const txt: string; Icon: TMsgBoxIcon; style: Integer=bOK): Integer; overload;
-  function MsgBox(Hwnd: THandle; const txt: string; Icon: TMsgBoxIcon; style: Integer=bOK): Integer; overload;
   function IfTh(AValue: Boolean; const ATrue: string; const AFalse: string = ''): string; overload; inline;
   function IfTh(AValue: Boolean; const ATrue: Integer; const AFalse: Integer = 0): Integer; overload; inline;
   function IfTh(AValue: Boolean; const ATrue: Cardinal; const AFalse: Cardinal = 0): Integer; overload; inline;
@@ -48,35 +28,9 @@ const
   // classes and stuff
   procedure CloseAndZeroHandle(var Handle: THandle); inline;
   function LastErrMsg: string; inline;
+  function CopyTextToCB(const Text: string; hWnd: HWND = 0): Boolean;
 
 implementation
-
-// ********* Message box ********* \\
-
-function MsgBox(const txt: string; style: Integer): Integer;
-begin
-  Result := MsgBox(0, txt, style);
-end;
-
-function MsgBox(Hwnd: THandle; const txt: string; style: Integer): Integer;
-begin
-  Result := MessageBox(Hwnd, PChar(txt), PChar(ExtractFileName(ParamStr(0))), style);
-end;
-
-function MsgBox(const txt: string; Icon: TMsgBoxIcon; style: Integer): Integer; overload;
-begin
-  Result := MsgBox(0, txt, Icon, style);
-end;
-
-function MsgBox(Hwnd: THandle; const txt: string; Icon: TMsgBoxIcon; style: Integer): Integer;
-begin
-  Result := MessageBox(Hwnd, PChar(txt), PChar(MsgBoxTitles[icon]), style+Integer(icon) shl 4);
-end;
-
-procedure Error(const msg: string);
-begin
-  raise Exception.Create(msg);
-end;
 
 // ********* Файлы, имена файлов ********* \\
 
@@ -194,6 +148,48 @@ end;
 function LastErrMsg: string;
 begin
   Result := SysErrorMessage(GetLastError);
+end;
+
+// Copy the text unsing WinAPI only (Clipboard object requires Forms unit)
+// hWnd is a handle of a window which will occupy the clipboard
+function CopyTextToCB(const Text: string; hWnd: HWND): Boolean;
+var
+  hMem: HGLOBAL;
+  Ptr: PChar;
+begin
+  Result := False;
+
+  if Text = '' then Exit;
+
+  // determine window handle which will occupy the clipboard
+  if hWnd = 0 then
+    hWnd := GetForegroundWindow;
+
+  // occupy the clipboard
+  if not OpenClipboard(hWnd) then Exit;
+  try
+    EmptyClipboard;
+
+    // globally allocate some memory for the string including trailing zero
+    hMem := GlobalAlloc(GMEM_MOVEABLE, (Length(Text)+1)*SizeOf(Char));
+    if hMem = 0 then Exit;
+
+    Ptr := PChar(GlobalLock(hMem));
+    if Ptr <> nil then
+    begin
+      Move(Text[1], Ptr^, Length(Text)*SizeOf(Char));
+      (Ptr + Length(Text))^ := #0;
+      GlobalUnlock(hMem);
+    end;
+
+    // set the data, manually free allocated memory on error
+    Result := SetClipboardData({$IFDEF UNICODE}CF_UNICODETEXT{$ELSE}CF_TEXT{$ENDIF}, hMem) <> 0;
+    if not Result then
+      GlobalFree(hMem);
+  finally
+    // release the clipboard
+    CloseClipboard;
+  end;
 end;
 
 end.
