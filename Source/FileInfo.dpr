@@ -17,15 +17,10 @@
  IN PROGRESS:
 
  TO DO:
-   * Report - if selection present
-   * Default icon when couldn't get - ?
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
    * возможность копировать только имя / только путь
-   * Значок "крестик", когда файл не сохранён, можно помещать в то место,
-     где выводится иконка файла, и там же справа, где указывается имя сохранённого файла,
-     выводить надпись "Документ не сохранён в файл", но не в поле, а лейблом, как сейчас,
-     чтобы не сбивало с толку.
+   * полоска слева от таба
 
  ???
    * icons for buttons
@@ -152,8 +147,8 @@ const
   PluginCommands: array[TPluginCommand] of string =
     ('browse', 'copypath', 'rename', 'report');
   BrowseCmd = 'explorer.exe /e, /select, %s';
-  ReportPattProp = '%s: %s'+NL;       // prop name / prop value
-  ReportPattAll = '== %s =='+NL+      // filename / file props / doc props
+  ReportPattProp = '%s: %s'+NL;       // vars: prop name / prop value
+  ReportPattAll = '== %s =='+NL+      // vars: filename / file props / doc props
                   '%s'+NL+
                   '*****'+NL+
                   '%s';
@@ -198,13 +193,13 @@ const
 // Global variables
 
 var
+  PluginCommand: TPluginCommand = TPluginCommand(-1);
   FileStats: TFileStats;
+  AkelData: TAkelData;
   MainDlg: TMainDlg;
   CountThread: TCountThread;
-  AkelData: TAkelData;
-  hiWarn, hiErr: HICON;
+  hiWarn: HICON;
   PrevEditWndProc: TFNWndProc;
-  PluginCommand: TPluginCommand = TPluginCommand(-1);
 
 {$REGION 'SERVICE FUNCTIONS'}
 
@@ -252,19 +247,16 @@ begin
 end;
 
 // Extract shell icon of the file
-// ! Executes in the context of the counter thread !
 function ExtractShellIcon(const FileName: string): HICON;
 var ShInf: TSHFileInfo;
 begin
-  if FileStats.FileName <> '' then  {}
+  Result := 0;
+  if FileName <> '' then
   begin
     ZeroMem(ShInf, SizeOf(ShInf));
-    SHGetFileInfo(PChar(FileName), FILE_ATTRIBUTE_NORMAL, ShInf, SizeOf(ShInf),
-                  SHGFI_USEFILEATTRIBUTES or SHGFI_ICON or SHGFI_LARGEICON); {}//check result
-//    if ShInf.hIcon then
-
-    Result := ShInf.hIcon;
-    {}// load empty icon
+    if SHGetFileInfo(PChar(FileName), FILE_ATTRIBUTE_NORMAL, ShInf, SizeOf(ShInf),
+                     SHGFI_USEFILEATTRIBUTES or SHGFI_ICON or SHGFI_LARGEICON) <> 0 then
+      Result := ShInf.hIcon;
   end;
 end;
 
@@ -590,7 +582,7 @@ var si: TStartupInfo;
 begin
   if FileStats.FileName = '' then
   begin
-    MsgBox(LangString(idPgFileLabelWarnMsgNotAFile), iStop);
+    MsgBox(LangString(idPgFileLabelWarnNotSaved), iStop);
     Exit;
   end;
   ZeroMem(pi, SizeOf(pi));
@@ -607,7 +599,7 @@ procedure CopyPath;
 begin
   if FileStats.FileName = '' then
   begin
-    MsgBox(LangString(idPgFileLabelWarnMsgNotAFile), iStop);
+    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
     Exit;
   end;
   CopyTextToCB(FileStats.FileName, AkelData.hMainWnd);
@@ -667,7 +659,7 @@ begin
 
   if FileStats.FileName = '' then
   begin
-    MsgBox(LangString(idPgFileLabelWarnMsgNotAFile), iStop);
+    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
     Exit;
   end;
 
@@ -767,12 +759,13 @@ begin
       Format(ReportPattProp, [LangString(idPgFileLabelSize),     IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '')]) +
       Format(ReportPattProp, [LangString(idPgFileLabelCreated),  IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '')]) +
       Format(ReportPattProp, [LangString(idPgFileLabelModified), IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '')]) +
-      IfTh(FileStats.IsModified, '(!) ' + LangString(idPgFileLabelWarnMsgNotSaved))
+      IfTh(FileStats.IsModified, '(!) ' + LangString(idPgFileLabelErrNotAFile))
   else
     FileProps := '(Not a file)';
 
   DocProps :=
-      Format(ReportPattProp, [LangString(idPgDocLabelCodePage), IfTh(GetCPInfoEx(FileStats.CodePage, 0, CPInfo), CPInfo.CodePageName, IntToStr(FileStats.CodePage))]) +
+      Format(ReportPattProp, [LangString(idPgDocLabelCodePage),   IfTh(GetCPInfoEx(FileStats.CodePage, 0, CPInfo), CPInfo.CodePageName, IntToStr(FileStats.CodePage))]) +
+      IfTh(FileStats.Selection, '# ' + LangString(idReportBasedOnSelection) + ' #' + NL) +
       LangString(idPgDocLabelChars) + NL +
       Format(ReportPattProp, [LangString(idPgDocLabelCharsTotal), IntToStr(FileStats.Counters.Chars)]) +
       Format(ReportPattProp, [LangString(idPgDocLabelCharsNoSp),  IntToStr(FileStats.Counters.Chars - FileStats.Counters.WhiteSpaces)]) +
@@ -784,7 +777,7 @@ begin
       '';
 
   Total := Format(ReportPattAll,
-                  [IfTh(FileStats.FileName = '', '(!) ' + LangString(idPgFileLabelWarnMsgNotAFile), ExtractFileName(FileStats.FileName)),
+                  [IfTh(FileStats.FileName = '', '(!) ' + LangString(idPgFileLabelErrNotAFile), ExtractFileName(FileStats.FileName)),
                    FileProps, DocProps]);
 
   CopyTextToCB(Total);
@@ -844,11 +837,15 @@ end;
 
 // Main procedure
 function TCountThread.Execute: DWORD;
+var
+  hIc: HICON;
 begin
   FState := stRunning;
 
   // retrieve shell icon here instead of the main thread because it lasts 0.5..1 sec sometimes
-  SendMessage(FhTargetWnd, MSG_ICON_EXTRACTED, WPARAM(ExtractShellIcon(FFileName)), 0);
+  hIc := ExtractShellIcon(FFileName);
+  if hIc <> 0 then
+    SendMessage(FhTargetWnd, MSG_ICON_EXTRACTED, WPARAM(hIc), 0);
 
   // thread cycle
   GetDocInfo(FAkelData, ThreadCountCallback);
@@ -878,7 +875,7 @@ begin
   FAppIcon := pd.hMainIcon;
   fShowTooltips := True;
 
-  SetItemData([ItemData(IDC_BTN_MAIN_OK, LangString(idMainBtnOK)),
+  SetItemData([ItemData(IDC_BTN_MAIN_OK, LangString(idMainBtnClose)),
                ItemData(IDC_BTN_REPORT, LangString(idMainBtnReport), LangString(idMainBtnReportTip))]);
   FTabPageCaptions[tabFile] := LangString(idPgFileTitle);
   FTabPageCaptions[tabDoc] := LangString(idPgDocTitle);
@@ -1082,8 +1079,7 @@ end;
 
 // set text values form FileStats record
 procedure TPageDlg.SetValues;
-var ShowWarnMsg: Boolean;
-    CPInfo: TCPInfoEx;
+var CPInfo: TCPInfoEx;
     hdc: Windows.HDC;
     Size: TSize;
     Rect: TRect;
@@ -1117,15 +1113,16 @@ begin
           GetWindowRect(Item[IDC_EDT_FILEPATH], Rect);
           if Size.cx >= Rect.Right - Rect.Left then
             ItemTooltip[IDC_EDT_FILEPATH] := Path;
-          // the content is not saved to file
+          // the content is not saved to file - set error icon as shell icon and
+          // show warning label instead of file name
           if FileStats.FileName = '' then
           begin
-            if hiErr = 0 then
-              hiErr := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_ERROR),
-                                 IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-            SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiErr), 0);
-            ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotAFile);
-            ShowWarnMsg := True;
+            if FileStats.hIcon = 0 then
+              FileStats.hIcon := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_ERROR),
+                                           IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR); // loads big icon
+            ItemText[IDC_STC_NOTAFILE] := LangString(idPgFileLabelErrNotAFile);
+            ItemVisible[IDC_STC_NOTAFILE] := True;
+            ItemVisible[IDC_EDT_FILENAME] := False;
             EnableWindow(Item[IDC_BTN_COPYPATH], False);
             EnableWindow(Item[IDC_BTN_BROWSE], False);
           end
@@ -1136,13 +1133,10 @@ begin
               hiWarn := LoadImage(GetModuleHandle(user32), MakeIntResource(ID_WARNING),
                                  IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
             SendMessage(Item[IDC_IMG_WARNMSG], STM_SETICON, WPARAM(hiWarn), 0);
-            ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnMsgNotSaved);
-            ShowWarnMsg := True;
-          end
-          else
-            ShowWarnMsg := False;
-          ItemVisible[IDC_IMG_WARNMSG] := ShowWarnMsg;
-          ItemVisible[IDC_STC_WARNMSG] := ShowWarnMsg;
+            ItemText[IDC_STC_WARNMSG] := LangString(idPgFileLabelWarnNotSaved);
+            ItemVisible[IDC_IMG_WARNMSG] := True;
+            ItemVisible[IDC_STC_WARNMSG] := True;
+          end;
           FValuesWereSet := True;
         end;
 
@@ -1355,7 +1349,6 @@ begin
   DestroyIcon(FileStats.hIcon);
   FreeAndNil(MainDlg);
   DestroyIcon(hiWarn);
-  DestroyIcon(hiErr);
 end;
 
 // Identification

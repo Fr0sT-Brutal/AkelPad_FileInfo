@@ -25,8 +25,8 @@ type
     idPgFileLabelCreated,
     idPgFileLabelModified,
     idPgFileTextSizePatt,
-    idPgFileLabelWarnMsgNotSaved,
-    idPgFileLabelWarnMsgNotAFile,
+    idPgFileLabelWarnNotSaved,
+    idPgFileLabelErrNotAFile,
     idPgFileBtnCopyPath,
     idPgFileBtnCopyPathTip,
     idPgFileBtnBrowse,
@@ -42,7 +42,7 @@ type
     idPgDocLabelSurr,
     idPgDocBtnCount,
     idPgDocBtnAbort,
-    idMainBtnOK,
+    idMainBtnClose,
     idMainBtnReport,
     idMainBtnReportTip,
     //...
@@ -56,6 +56,8 @@ type
     idInputBoxLabel,
     idInputBoxBtnOK,
     idInputBoxBtnCancel,
+    // report
+    idReportBasedOnSelection,
     // other
     idBla
   );
@@ -109,7 +111,7 @@ const
         'Surrogate pairs',
         'Count',
         'Abort',
-        'OK',
+        'Close',
         'Report',
         'Copy full statistics to clipboard',
         //...
@@ -123,6 +125,8 @@ const
         'Enter new file name',
         'OK',
         'Cancel',
+        // report
+        'Statistics estimated on selected part of text',
         // other
         'Blabla'
       );
@@ -160,7 +164,7 @@ const
         'Суррогатные пары',
         'Подсчитать',
         'Прервать',
-        'ОК',
+        'Закрыть',
         'Отчёт',
         'Скопировать полную статистику в буфер обмена',
         //...
@@ -174,6 +178,8 @@ const
         'Введите новое имя файла',
         'ОК',
         'Отмена',
+        // report
+        'Статистика рассчитана по выделенному фрагменту текста',
         // other
         'Блабла'
       );
