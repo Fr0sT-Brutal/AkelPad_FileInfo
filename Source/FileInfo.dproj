@@ -3,7 +3,7 @@
 			<ProjectGuid>{D0745573-728E-4128-8268-4208B0F2A62A}</ProjectGuid>
 			<ProjectVersion>12.0</ProjectVersion>
 			<MainSource>FileInfo.dpr</MainSource>
-			<Config Condition="'$(Config)'==''">Release</Config>
+			<Config Condition="'$(Config)'==''">Debug</Config>
 			<DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
@@ -21,16 +21,17 @@
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Base)'!=''">
 			<DCC_UsePackage>vclx;vcl;rtl;vclactnband;xmlrtl;vclimg;VclSmp;vclribbon;OverbyteIcsD2010Run;VirtualTreesR;dbrtl;vcldb;vclAbsDBd13;EhLib90;sdlgeopack_97R7;sdlgeopack_rt_97R7;sdlmathpack_rt_97R7;sdlbasepack_rt_97R7;adortl;sdlmathpack_97R7;dsnap</DCC_UsePackage>
+			<DCC_Define>lang_RU;$(DCC_Define)</DCC_Define>
 			<BRCC_CompilerToUse>rc</BRCC_CompilerToUse>
 			<GenDll>true</GenDll>
 			<DCC_UnitSearchPath>#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
 			<DCC_UnitAlias>WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;$(DCC_UnitAlias)</DCC_UnitAlias>
-			<DCC_DependencyCheckOutputName>FileInfoD2010.dll</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>FileInfo.dll</DCC_DependencyCheckOutputName>
 			<DCC_ImageBase>00400000</DCC_ImageBase>
 			<DCC_Platform>x86</DCC_Platform>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_1)'!=''">
-			<DCC_DependencyCheckOutputName>..\Plugs\FileInfoD2010.dll</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>..\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
 			<DCC_ExeOutput>..\Plugs</DCC_ExeOutput>
 			<DCC_IOChecking>false</DCC_IOChecking>
 			<DCC_RunTimeTypeInfo>true</DCC_RunTimeTypeInfo>
@@ -41,7 +42,7 @@
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2)'!=''">
 			<DCC_ExeOutput>..\_AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
-			<DCC_DependencyCheckOutputName>..\_AkelPad\AkelFiles\Plugs\FileInfoD2010.dll</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>..\_AkelPad\AkelFiles\Plugs\FileInfo.dll</DCC_DependencyCheckOutputName>
 			<DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
 		</PropertyGroup>
 		<ItemGroup>
@@ -50,9 +51,6 @@
 			</DelphiCompile>
 			<RcCompile Include="Dialog.rc">
 				<Form>Dialog.res</Form>
-			</RcCompile>
-			<RcCompile Include="MainIcon.rc">
-				<Form>MainIcon.res</Form>
 			</RcCompile>
 			<DCCReference Include="#AkelDefs\AkelDLL_h.pas"/>
 			<DCCReference Include="#AkelDefs\AkelEdit_h.pas"/>
@@ -88,7 +86,7 @@
 						<VersionInfo Name="IncludeVerInfo">True</VersionInfo>
 						<VersionInfo Name="AutoIncBuild">False</VersionInfo>
 						<VersionInfo Name="MajorVer">0</VersionInfo>
-						<VersionInfo Name="MinorVer">5</VersionInfo>
+						<VersionInfo Name="MinorVer">4</VersionInfo>
 						<VersionInfo Name="Release">10</VersionInfo>
 						<VersionInfo Name="Build">0</VersionInfo>
 						<VersionInfo Name="Debug">False</VersionInfo>
@@ -102,7 +100,7 @@
 					<VersionInfoKeys>
 						<VersionInfoKeys Name="CompanyName"/>
 						<VersionInfoKeys Name="FileDescription">AkelPad (x86) text editor plugin</VersionInfoKeys>
-						<VersionInfoKeys Name="FileVersion">0.5.10.0</VersionInfoKeys>
+						<VersionInfoKeys Name="FileVersion">0.4.10.0</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName"/>
 						<VersionInfoKeys Name="LegalCopyright">Fr0sT</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalTrademarks"/>
