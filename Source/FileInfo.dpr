@@ -15,6 +15,7 @@
 
 {
  IN PROGRESS:
+   ---
 
  TO DO:
    * "I did a test on this text: Text for test."
@@ -34,9 +35,9 @@
 
 library FileInfo;
 
-{$R *.RES}
 {$R 'Dialog.res' 'Dialog.rc'}
-{$R Icon.res}
+{$R 'MainIcon.res' 'MainIcon.rc'}
+{$R *.RES}
 
 uses
   Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
@@ -1184,6 +1185,7 @@ begin
         hwndTab := ParentHwnd;
         GetClientRect(hwndTab, TabClientArea);
         SendMessage(hwndTab, TCM_ADJUSTRECT, Windows.WPARAM(False), Windows.LPARAM(@TabClientArea));
+        Dec(TabClientArea.Left, 2); // ! TCM_ADJUSTRECT leaves 2 excess pixels on the left so remove it
         SetWindowPos(DlgHwnd, 0, TabClientArea.Left, TabClientArea.Top,
                      TabClientArea.Right - TabClientArea.Left, TabClientArea.Bottom - TabClientArea.Top,
                      SWP_NOZORDER);
