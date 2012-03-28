@@ -27,7 +27,7 @@ If there's selection present, shows statistics only for it
 
 Also allows performing additional commands upon the current file:
 	- Browse in Explorer
-	- Copy full path to clipboard
+	- Copy full path or some part of it to clipboard
 	- Rename
 	- Copy statistics to clipboard
 
@@ -46,16 +46,22 @@ Main function.
 
 *** External call FileInfo::Main ***
 
-Call("ContextMenu::Main")
+Call("FileInfo::Main")
   Show main dialog
 
-Call("ContextMenu::Main", "STRING")
+Call("FileInfo::Main", "STRING")
   Perform a command with current file. Main dialog won't be shown and plugin will be finished right after performing a command. 
   Parameters:
     STRING
       Command to perform. Following commands are supported:
         browse - browse for current file in Explorer
-        copypath - copy full path to clipboard
+        copypath - copy full path (default) or some part of it (if parameter specified) to clipboard
+        	Parameters:
+        		name - name and extension (AkelPad.exe)
+        		namenoext - name only (AkelPad)
+        		path - path only (C:\Soft\AkelPad\)
+        	Example:
+        		Call("FileInfo::Main", "copypath", "namenoext")
         rename - rename file (you will be prompted for a new name with dialog)
         report - copy file statistics to clipboard
 

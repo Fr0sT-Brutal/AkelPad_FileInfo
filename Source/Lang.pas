@@ -51,6 +51,7 @@ type
     idMsgShowDlgFail,
     idMsgFileExists,
     idMsgCountNotCompleted,
+    idMsgInvalidParam,
     // input box
     idInputBoxCaption,
     idInputBoxLabel,
@@ -120,6 +121,7 @@ const
         'Error showing the dialog',
         'File %s already exists',
         'Statistics estimation process wasn''t completed',
+        'Invalid parameter: %s',
         // input box
         'Rename file',
         'Enter new file name',
@@ -173,6 +175,7 @@ const
         'Ошибка при показе диалога',
         'Указанный файл %s уже существует',
         'Процесс подсчёта статистики не был завершён',
+        'Неправильный параметр: %s',
         // input box
         'Переименовать файл',
         'Введите новое имя файла',

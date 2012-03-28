@@ -20,8 +20,6 @@
  TO DO:
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
-   * возможность копировать только имя / только путь
-   * полоска слева от таба
 
  ???
    * icons for buttons
@@ -138,15 +136,14 @@ const
   //   wParam: HICON
   //   lParam: 0
   MSG_ICON_EXTRACTED = MSG_BASE + 2;
-  // "Filename" edit control -> File props dialog
-  //   User commanded to rename the file
-  MSG_RENAME_FILE    = MSG_BASE + 3;
 
 type
   TPluginCommand = (cmdBrowse, cmdCopyPath, cmdRename, cmdGetReport);
 const
   PluginCommands: array[TPluginCommand] of string =
     ('browse', 'copypath', 'rename', 'report');
+  CopyPathParams: array[0..2] of string =
+    ('name', 'namenoext', 'path');
   BrowseCmd = 'explorer.exe /e, /select, %s';
   ReportPattProp = '%s: %s'+NL;       // vars: prop name / prop value
   ReportPattAll = '== %s =='+NL+      // vars: filename / file props / doc props
@@ -168,9 +165,12 @@ type
   TMainDlg = class(TResDialog)
   strict private
     FPages: array[TTabPage] of TPageDlg;
+    FCurrPage: TTabPage;
     FAppIcon: HICON;
     FTabPageCaptions: array[TTabPage] of string;
-    procedure DoDialogProc(msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT); override;
+    procedure SetCurrPage(Page: TTabPage);
+    procedure DoDialogProc(const Msg: TMsg; out Res: LRESULT); override;
+    procedure DoBeforeMessage(const Msg: TMsg; out Res: LRESULT; out Handled: Boolean); override;
   public
     constructor Create(const pd: TPLUGINDATA);
     destructor Destroy; override;
@@ -181,10 +181,10 @@ type
     FOwner: TMainDlg;
     FPage: TTabPage;
     FValuesWereSet: Boolean;
-    procedure DoDialogProc(msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT); override;
+    procedure DoDialogProc(const Msg: TMsg; out Res: LRESULT); override;
   public
     constructor Create(const pd: TPLUGINDATA; Owner: TMainDlg; Page: TTabPage);
-    procedure SetValues;
+    procedure SetValues(Forced: Boolean = False);
   end;
 
 const
@@ -195,12 +195,12 @@ const
 
 var
   PluginCommand: TPluginCommand = TPluginCommand(-1);
+  CommandParam: string;
   FileStats: TFileStats;
   AkelData: TAkelData;
   MainDlg: TMainDlg;
   CountThread: TCountThread;
   hiWarn: HICON;
-  PrevEditWndProc: TFNWndProc;
 
 {$REGION 'SERVICE FUNCTIONS'}
 
@@ -564,8 +564,8 @@ var
   hwndParent: HWND;
 begin
   // determine parent window
-  if (MainDlg <> nil) and (MainDlg.DlgHwnd <> 0)
-    then hwndParent := MainDlg.DlgHwnd
+  if (MainDlg <> nil) and (MainDlg.DlgWnd <> 0)
+    then hwndParent := MainDlg.DlgWnd
     else hwndParent := AkelData.hMainWnd;
   // show the box, don't care about the result
   MessageBox(hwndParent, PChar(Txt), PChar(string(PluginName) + ' plugin'), MB_OK + MsgBoxIconFlags[Icon]);
@@ -597,30 +597,49 @@ end;
 
 // copy full file path to clipboard
 procedure CopyPath;
+var s: string;
 begin
   if FileStats.FileName = '' then
   begin
     MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
     Exit;
   end;
-  CopyTextToCB(FileStats.FileName, AkelData.hMainWnd);
+
+  if CommandParam = '' then
+    s := FileStats.FileName
+  else
+  if CommandParam = CopyPathParams[0] then
+    s := ExtractFileName(FileStats.FileName)
+  else
+  if CommandParam = CopyPathParams[1] then
+    s := ChangeFileExt(ExtractFileName(FileStats.FileName), '')
+  else
+  if CommandParam = CopyPathParams[2] then
+    s := ExtractFilePath(FileStats.FileName)
+  else
+  begin
+    MsgBox(Format(LangString(idMsgInvalidParam), [CommandParam]), iStop);
+    Exit;
+  end;
+
+  CopyTextToCB(s, AkelData.hMainWnd);
 end;
 
 type
   // Class with static method just to not mess with some special object.
   // Class (static) methods could work as "procedure of object"
   THandler = class
-    class procedure InputBoxDialogProc(Sender: TResDialog; msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
+    class procedure InputBoxDialogProc(Sender: TResDialog; const Msg: TMsg; out Res: LRESULT);
   end;
 
-class procedure THandler.InputBoxDialogProc(Sender: TResDialog; msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
+class procedure THandler.InputBoxDialogProc(Sender: TResDialog; const Msg: TMsg; out Res: LRESULT);
 var
   Fn: string;
   pPoint, pFn: PChar;
   PointPos: Integer;
   hEdit: HWND;
 begin
-  case msg of
+  case Msg.message of
     // dialog created and is going to be shown
     // Select only name of the file (no extension) in edit control
     RDM_DLGOPENING:
@@ -667,8 +686,8 @@ begin
   // ask a user for a new file name
   if NewName = '' then
   begin
-    if (MainDlg <> nil) and (MainDlg.DlgHwnd <> 0)
-      then hwndParent := MainDlg.DlgHwnd
+    if (MainDlg <> nil) and (MainDlg.DlgWnd <> 0)
+      then hwndParent := MainDlg.DlgWnd
       else hwndParent := AkelData.hEditWnd;
 
     InputBox := TResDialog.Create(IDD_DLG_INPUTBOX, hwndParent);
@@ -896,20 +915,72 @@ begin
   inherited;
 end;
 
-procedure TMainDlg.DoDialogProc(msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
+// Handle Ctrl-Tab and Ctrl-Shift-Tab on the whole dialog for cycling through tabs
+// Handle Ctrl-S on File_Tab.Filename edit control for renaming a file
+procedure TMainDlg.DoBeforeMessage(const Msg: TMsg; out Res: LRESULT; out Handled: Boolean);
+var
+  ShiftState: TShiftState;
+  NewPage: TTabPage;
+begin
+  case Msg.message of
+    WM_KEYDOWN:
+      begin
+        ShiftState := GetKeyboardShiftState;
+
+        // handle Ctrl-Tab and Ctrl-Shift-Tab for cycling through tabs
+        if Msg.wParam = VK_TAB then
+        begin
+          if ShiftState = [ssCtrl, ssShift] then // backward
+            NewPage := Pred(FCurrPage)
+          else
+          if ShiftState = [ssCtrl] then // forward
+            NewPage := Succ(FCurrPage)
+          else
+            Exit;
+          // tab cycle (1 -> 2 -> 1)
+          if NewPage < Low(TTabPage) then
+            NewPage := High(TTabPage)
+          else
+          if NewPage > High(TTabPage) then
+            NewPage := Low(TTabPage);
+
+          SetCurrPage(NewPage);
+          Handled := True;
+          Exit;
+        end;
+
+        // Custom handler for "Filename" edit control which handles Ctrl-S combination.
+        if GetDlgCtrlID(Msg.hwnd) = IDC_EDT_FILENAME then
+          if (Char(Msg.wParam) = 'S') and (ShiftState = [ssCtrl]) then
+            // if edit is modified, send command to the parent dialog
+            if SendMessage(Msg.hwnd, EM_GETMODIFY, 0, 0) <> 0 then
+            begin
+              if not Rename(FPages[tabFile].ItemText[IDC_EDT_FILENAME]) then Exit;
+              // refresh file props
+              GetFileInfo(AkelData, FileStats);
+              FileStats.hIcon := ExtractShellIcon(FileStats.FileName);
+              FPages[tabFile].SetValues(True);
+              Handled := True;
+              Exit;
+            end;
+      end; // WM_KEYDOWN
+
+  end; // case
+end;
+
+procedure TMainDlg.DoDialogProc(const Msg: TMsg; out Res: LRESULT);
 var hwndTab: HWND;
     pg: TTabPage;
     tabItem: TTCItem;
     NotifyHdr: TNMHdr;
     pProgr: PCountProgress;
 begin
-  case msg of
+  case Msg.message of
     // dialog created and is going to be shown
     RDM_DLGOPENING:
       begin
-        SendMessage(DlgHwnd, WM_SETICON, ICON_SMALL, Windows.LPARAM(FAppIcon));
+        SendMessage(DlgWnd, WM_SETICON, ICON_SMALL, Windows.LPARAM(FAppIcon));
         Caption := IfTh(FileStats.Selection, LangString(idTitleSelProps), LangString(idTitleFileProps));
-
         hwndTab := Item[IDC_TAB];
         // init tabs
         for pg := Low(TTabPage) to High(TTabPage) do
@@ -920,19 +991,15 @@ begin
           tabItem.pszText := PChar(FTabPageCaptions[pg]);
           SendMessage(hwndTab, TCM_INSERTITEM, Integer(pg), Windows.LPARAM(@tabItem));
           // parent window handle changes every time so set the actual one
-          FPages[pg].ParentHwnd := hwndTab;
+          FPages[pg].Parent := hwndTab;
         end;
         // select the probably required page (text stats if selection is present)
-        SendMessage(hwndTab, TCM_SETCURSEL, IfTh(FileStats.Selection, Integer(tabDoc), Integer(tabFile)), 0);
-
-        // imitate page change to init the page dialog
-        NotifyHdr.hwndFrom := DlgHwnd;
-        NotifyHdr.idFrom := IDC_TAB;
-        NotifyHdr.code := TCN_SELCHANGE;
-        SendMessage(DlgHwnd, WM_NOTIFY, 0, Windows.LPARAM(@NotifyHdr));
+        if FileStats.Selection
+          then SetCurrPage(tabDoc)
+          else SetCurrPage(tabFile);
 
         FPages[tabDoc].ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
-        CountThread.Run(DlgHwnd, AkelData, FileStats); // start counting
+        CountThread.Run(DlgWnd, AkelData, FileStats); // start counting
       end;
 
     // dialog is closing - stop the thread
@@ -944,7 +1011,7 @@ begin
     // tab page changes
     WM_NOTIFY:
       begin
-        NotifyHdr := PNMHdr(lParam)^;
+        NotifyHdr := PNMHdr(Msg.lParam)^;
         case NotifyHdr.code of
           // page is about to change, hide the current page
           TCN_SELCHANGING:
@@ -961,6 +1028,7 @@ begin
               pg := TTabPage(SendMessage(hwndTab, TCM_GETCURSEL, 0, 0));
               FPages[pg].Show(SW_SHOW);
               FPages[pg].SetValues;
+              FCurrPage := pg;
               Res := LRESULT(True);
             end;
           else
@@ -970,13 +1038,13 @@ begin
     // message from counting thread - update progress
     MSG_UPD_COUNT:
       begin
-        pProgr := PCountProgress(lParam);
+        pProgr := PCountProgress(Msg.lParam);
         FileStats.Counters := pProgr.Counters;
 
         // change values on the doc page only if it is visible
-        if not IsWindowVisible(FPages[tabDoc].DlgHwnd) then Exit;
+        if FCurrPage <> tabDoc then Exit;
         FPages[tabDoc].SetValues;
-        if TThreadState(wParam) = stRunning then
+        if TThreadState(Msg.wParam) = stRunning then
           SendMessage(FPages[tabDoc].Item[IDC_PGB_PROCESS], PBM_SETPOS, pProgr.PercentDone, 0);
 
         Res := LRESULT(True);
@@ -984,16 +1052,16 @@ begin
 
     MSG_ICON_EXTRACTED:
       begin
-        FileStats.hIcon := HICON(wParam);
-        if IsWindowVisible(FPages[tabFile].DlgHwnd) then
+        FileStats.hIcon := HICON(Msg.wParam);
+        if FCurrPage = tabFile then
           FPages[tabFile].SetValues;
       end;
 
     // notifications from child controls
     WM_COMMAND:
-      case HiWord(wParam) of
+      case HiWord(Msg.wParam) of
         BN_CLICKED:
-          case LoWord(wParam) of
+          case LoWord(Msg.wParam) of
             // "Report" button
             IDC_BTN_REPORT: GetReport;
           end;
@@ -1002,31 +1070,16 @@ begin
   end; // case msg
 end;
 
-// Custom handler for "Filename" edit control which handles Ctrl-S combination.
-// This is the only way of catching keyboard events as for dialog boxes OS hides
-// it completely (WM_CHAR won't arrive to DlgProc).
-function FileNameEditWndProc(hWnd: HWND; msg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
-var ks: TKeyboardState;
+procedure TMainDlg.SetCurrPage(Page: TTabPage);
 begin
-  case msg of
-    WM_KEYDOWN:
-      if Char(wParam) = 'S' then
-      begin
-        // check modifiers state
-        GetKeyboardState(ks);
-        if (ks[VK_CONTROL] and $80 <> 0) and
-           (ks[VK_MENU] and $80 = 0) and (ks[VK_SHIFT] and $80 = 0) and
-           (ks[VK_LWIN] and $80 = 0) and (ks[VK_RWIN] and $80 = 0)
-        then
-          // if edit is modified, send command to the parent dialog
-          if SendMessage(hWnd, EM_GETMODIFY, 0, 0) <> 0 then
-          begin
-            PostMessage(GetParent(hWnd), MSG_RENAME_FILE, 0, 0);
-            Exit(0);
-          end;
-      end;
+  if SendMessage(Item[IDC_TAB], TCM_SETCURSEL, WPARAM(Page), 0) <> -1 then
+  begin
+    FPages[FCurrPage].Show(SW_HIDE);
+    FCurrPage := Page;
+    FPages[FCurrPage].Show(SW_SHOW);
+    SetFocus(FPages[FCurrPage].DlgWnd); // ! otherwise it remains inside the hidden page !
+    FPages[FCurrPage].SetValues;
   end;
-  Result := CallWindowProc(PrevEditWndProc, hWnd, Msg, wParam, lParam);
 end;
 
 // TPageDlg
@@ -1079,7 +1132,7 @@ begin
 end;
 
 // set text values form FileStats record
-procedure TPageDlg.SetValues;
+procedure TPageDlg.SetValues(Forced: Boolean);
 var CPInfo: TCPInfoEx;
     hdc: Windows.HDC;
     Size: TSize;
@@ -1097,7 +1150,7 @@ begin
   case FPage of
     tabFile:
       begin
-        if not FValuesWereSet then // some values might change (during count process) and some might not
+        if not FValuesWereSet or Forced then // some values might change (during count process) and some might not
         begin
           Path := ExtractFilePath(FileStats.FileName);
           ItemText[IDC_EDT_FILENAME] := ExtractFileName(FileStats.FileName);
@@ -1147,7 +1200,7 @@ begin
 
     tabDoc:
       begin
-        if not FValuesWereSet then // some values might change (during count process) and some might not
+        if not FValuesWereSet or Forced then // some values might change (during count process) and some might not
         begin
           ItemText[IDC_EDT_CODEPAGE] :=
             IfTh(GetCPInfoEx(FileStats.CodePage, 0, CPInfo), CPInfo.CodePageName, IntToStr(FileStats.CodePage));
@@ -1172,27 +1225,23 @@ begin
 
 end;
 
-procedure TPageDlg.DoDialogProc(msg: UINT; wParam: WPARAM; lParam: LPARAM; out Res: LRESULT);
+procedure TPageDlg.DoDialogProc(const Msg: TMsg; out Res: LRESULT);
 var
   hwndTab: HWND;
   TabClientArea: TRect;
 begin
-  case msg of
+  case Msg.message of
     // dialog is showing - set position inside tab page
     RDM_DLGOPENING:
       begin
         // calculate tab's client area
-        hwndTab := ParentHwnd;
+        hwndTab := Parent;
         GetClientRect(hwndTab, TabClientArea);
         SendMessage(hwndTab, TCM_ADJUSTRECT, Windows.WPARAM(False), Windows.LPARAM(@TabClientArea));
         Dec(TabClientArea.Left, 2); // ! TCM_ADJUSTRECT leaves 2 excess pixels on the left so remove it
-        SetWindowPos(DlgHwnd, 0, TabClientArea.Left, TabClientArea.Top,
+        SetWindowPos(DlgWnd, 0, TabClientArea.Left, TabClientArea.Top,
                      TabClientArea.Right - TabClientArea.Left, TabClientArea.Bottom - TabClientArea.Top,
                      SWP_NOZORDER);
-        // subclass edit control to catch keyboard events
-        if FPage = tabFile then
-          PrevEditWndProc := TFNWndProc(SetWindowLongPtr(Item[IDC_EDT_FILENAME], GWLP_WNDPROC,
-                                                         LONG_PTR(@FileNameEditWndProc)));
       end;
 
     RDM_DLGCLOSED:
@@ -1200,10 +1249,10 @@ begin
 
     // notification from control
     WM_COMMAND:
-      case HiWord(wParam) of
+      case HiWord(Msg.wParam) of
 
         BN_CLICKED: // Button
-          case LoWord(wParam) of
+          case LoWord(Msg.wParam) of
             // (Doc page) "Start/stop count" button. Run/stop the thread
             IDC_BTN_STOP:
               if CountThread.State = stRunning then
@@ -1217,7 +1266,7 @@ begin
               begin
                 FileStats.Counters.State := cntNotActual;
                 SetValues;
-                CountThread.Run(FOwner.DlgHwnd, AkelData, FileStats);
+                CountThread.Run(FOwner.DlgWnd, AkelData, FileStats);
                 SendMessage(Item[IDC_PGB_PROCESS], PBM_SETPOS, 0, 0);
                 ItemVisible[IDC_PGB_PROCESS] := True;
                 ItemText[IDC_BTN_STOP] := LangString(idPgDocBtnAbort);
@@ -1232,7 +1281,7 @@ begin
           end; // case LoWord
 
         EN_CHANGE: // Edit
-          case LoWord(wParam) of
+          case LoWord(Msg.wParam) of
             // (File page) "Filename" editor has changed. Show rename hint. Additionally check
             // "modified" flag as this notification is sent even when nothing changes
             IDC_EDT_FILENAME:
@@ -1240,17 +1289,6 @@ begin
           end; // case LoWord
 
       end; // case HiWord
-
-    // (File page) command from "Filename" edit control: user requested file renaming.
-    MSG_RENAME_FILE:
-      begin
-        if not Rename(ItemText[IDC_EDT_FILENAME]) then Exit;
-        // refresh file props
-        GetFileInfo(AkelData, FileStats);
-        FileStats.hIcon := ExtractShellIcon(FileStats.FileName);
-        FValuesWereSet := False;
-        SetValues;
-      end;
 
   end; // case msg
 end;
@@ -1261,19 +1299,10 @@ end;
 
 // initialize stuff with given PLUGINDATA members
 procedure Init(var pd: TPLUGINDATA);
-// Parameters for current call are kept in the following form:
-//   pd.lParam - pointer to array of INT_PTR (let's call it Params)
-//   Params[0] = size of the whole array in bytes including the 0-th element itself.
-//               So Length(Params) = Params[0] div SizeOf(INT_PTR), ParamCount = Length(Params) - 1
-//   Params[1] = pointer to parameter string OR the value of numerical parameter
-//   ...
-type
-  TAkelParams = array[0..$FFFF] of INT_PTR;
-  PAkelParams = ^TAkelParams;
 var
-  AkelParams: PAkelParams;
   sCmd: string;
   TmpCmd: TPluginCommand;
+  AkelParams: TAkelParams;
 begin
   ZeroMem(AkelData, SizeOf(AkelData));
   AkelData.hMainWnd := pd.hMainWnd;
@@ -1281,18 +1310,25 @@ begin
   SetCurrLang(PRIMARYLANGID(pd.wLangModule));
 
   // check for parameter
-  AkelParams := PAkelParams(pd.lParam);
-  if (AkelParams <> nil) and (AkelParams^[0] div SizeOf(INT_PTR) - 1 = 1) then
+  AkelParams.Init(Pointer(pd.lParam));
+  if AkelParams.Count > 0 then
   begin
-    sCmd := string(PChar(AkelParams^[1])); // returns empty string if parameter is NULL
+    sCmd := AkelParams.ParamStr(0); // returns empty string if parameter is NULL
     // determine command
-    for TmpCmd := Low(TPluginCommand) to High(TPluginCommand) do
-      if sCmd = PluginCommands[TmpCmd] then
-      begin
-        PluginCommand := TmpCmd;
-        Break;
-      end;
+    if sCmd <> '' then
+      for TmpCmd := Low(TPluginCommand) to High(TPluginCommand) do
+        if sCmd = PluginCommands[TmpCmd] then
+        begin
+          PluginCommand := TmpCmd;
+          Break;
+        end;
+    // get command parameter if any
+    CommandParam := AkelParams.ParamStr(1);
   end;
+
+  // warn about invalid/unknown parameter but don't do anything else (!)
+  if (sCmd <> '') and (PluginCommand = TPluginCommand(-1)) then
+    MsgBox(Format(LangString(idMsgInvalidParam), [sCmd]), iWarn);
 
   // create dialog and thread only when no command specified
   if PluginCommand = TPluginCommand(-1) then
@@ -1329,7 +1365,7 @@ begin
       end;
     // no command specified - show GUI and launch thread
     else
-      if MainDlg.ShowModal = -1 then
+      if MainDlg.ShowModalCustom = -1 then
         MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
   end; // case command
 end;
