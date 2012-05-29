@@ -890,7 +890,7 @@ end;
 constructor TMainDlg.Create(const pd: TPLUGINDATA);
 var pg: TTabPage;
 begin
-  inherited Create(pd.hInstanceDLL, IDD_DLG_MAIN, pd.hMainWnd);
+  inherited Create(pd.hInstanceDLL, IDD_DLG_MAIN, {}0{pd.hMainWnd});
 
   FAppIcon := pd.hMainIcon;
   fShowTooltips := True;
