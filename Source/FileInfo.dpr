@@ -18,6 +18,7 @@
    ---
 
  TO DO:
+   * replace "commands" with separate plugin functions
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
 
