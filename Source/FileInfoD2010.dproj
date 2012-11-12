@@ -20,10 +20,11 @@
 			<Base>true</Base>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Base)'!=''">
+			<DCC_Define>MiniRTL;$(DCC_Define)</DCC_Define>
 			<DCC_UsePackage>vclx;vcl;rtl;vclactnband;xmlrtl;vclimg;VclSmp;vclribbon;OverbyteIcsD2010Run;VirtualTreesR;dbrtl;vcldb;vclAbsDBd13;EhLib90;sdlgeopack_97R7;sdlgeopack_rt_97R7;sdlmathpack_rt_97R7;sdlbasepack_rt_97R7;adortl;sdlmathpack_97R7;dsnap</DCC_UsePackage>
 			<BRCC_CompilerToUse>rc</BRCC_CompilerToUse>
 			<GenDll>true</GenDll>
-			<DCC_UnitSearchPath>#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+			<DCC_UnitSearchPath>#MiniRTL;#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
 			<DCC_UnitAlias>WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;$(DCC_UnitAlias)</DCC_UnitAlias>
 			<DCC_DependencyCheckOutputName>FileInfoD2010.dll</DCC_DependencyCheckOutputName>
 			<DCC_ImageBase>00400000</DCC_ImageBase>
@@ -60,12 +61,12 @@
 			<BuildConfiguration Include="Base">
 				<Key>Base</Key>
 			</BuildConfiguration>
-			<BuildConfiguration Include="Debug">
-				<Key>Cfg_2</Key>
-				<CfgParent>Base</CfgParent>
-			</BuildConfiguration>
 			<BuildConfiguration Include="Release">
 				<Key>Cfg_1</Key>
+				<CfgParent>Base</CfgParent>
+			</BuildConfiguration>
+			<BuildConfiguration Include="Debug">
+				<Key>Cfg_2</Key>
 				<CfgParent>Base</CfgParent>
 			</BuildConfiguration>
 		</ItemGroup>
@@ -89,7 +90,7 @@
 						<VersionInfo Name="AutoIncBuild">False</VersionInfo>
 						<VersionInfo Name="MajorVer">0</VersionInfo>
 						<VersionInfo Name="MinorVer">6</VersionInfo>
-						<VersionInfo Name="Release">1</VersionInfo>
+						<VersionInfo Name="Release">2</VersionInfo>
 						<VersionInfo Name="Build">0</VersionInfo>
 						<VersionInfo Name="Debug">False</VersionInfo>
 						<VersionInfo Name="PreRelease">False</VersionInfo>
@@ -102,7 +103,7 @@
 					<VersionInfoKeys>
 						<VersionInfoKeys Name="CompanyName"/>
 						<VersionInfoKeys Name="FileDescription">AkelPad text editor plugin</VersionInfoKeys>
-						<VersionInfoKeys Name="FileVersion">0.6.1.0</VersionInfoKeys>
+						<VersionInfoKeys Name="FileVersion">0.6.2.0</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName">FileInfo</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalCopyright">Fr0sT</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalTrademarks"/>
