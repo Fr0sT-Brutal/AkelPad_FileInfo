@@ -20,9 +20,16 @@
    ---
 
  TO DO:
-   * replace "commands" with separate plugin functions
+   * replace "commands" with separate plugin functions (?)
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
+   * HeaderInfo:
+      easy
+        *
+      medium
+        modified state
+        MDI
+        customizable header format
 
  ???
    * icons for buttons
@@ -158,6 +165,8 @@ const // Constants for HeaderInfo function
   // 1s - AkelPad version
   // 2s - file path
   HeaderFmt = '%0s - AkelPad %1s [%2s]';
+  // 0s - AkelPad version
+  HeaderEmptyFmt = '[Empty] - AkelPad %0s';
 
 // Interface
 
@@ -1438,32 +1447,49 @@ end;
 
 {$REGION 'HEADERINFO PLUGIN FUNCTION'}
 
-function Hook(hWnd: HWND; uMsg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
+procedure SetHeaderInfo;
 var
   ei: TEDITINFO;
   s: string;
 begin
-//OutputDebugString(pchar(inttostr(umsg)));
-
-  // Document is opened
-  if uMsg = AKDN_OPENDOCUMENT_FINISH then
+  ZeroMem(ei, SizeOf(ei));
+  if (AkelData.hMainWnd <> 0) and
+     (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0) then
   begin
-    ZeroMem(ei, SizeOf(ei));
-    if (AkelData.hMainWnd <> 0) and
-       (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0) then
-    begin
-      if ei.wszFile <> nil then
-        FileStats.FileName := string(ei.wszFile)
-      else if ei.szFile <> nil then
-        FileStats.FileName := string(AnsiString(ei.szFile));
+    if ei.wszFile <> nil then
+      FileStats.FileName := string(ei.wszFile)
+    else if ei.szFile <> nil then
+      FileStats.FileName := string(AnsiString(ei.szFile));
 
-      s := Format(HeaderFmt, [ExtractFileName(FileStats.FileName), AkelVer,
-                              ExtractFilePath(FileStats.FileName)]);
-      SetWindowText(AkelData.hMainWnd, PChar(s));
+    if FileStats.FileName <> ''
+      then
+        s := Format(HeaderFmt, [ExtractFileName(FileStats.FileName), AkelVer,
+                                ExcludeTrailingBackslash(ExtractFilePath(FileStats.FileName))])
+      else
+        s := Format(HeaderEmptyFmt, [AkelVer]);
 
-      OutputDebugString(pchar(s));
-    end;
+    SetWindowText(AkelData.hMainWnd, PChar(s));
+  end;
+end;
 
+// Hook proc that catches main Akel window messages
+function HeaderInfoSubcl(hWnd: HWND; uMsg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
+begin
+//OutputDebugString(pchar(IntToStr(uMsg)));
+
+  case uMsg of
+    // Edit window is about to be cleared
+    // ! Akel sends this message and THEN modifies window header so we just imitate
+    // edit window creation asynchronously. Let's hope none of the plugins would
+    // rely on WPARAM and LPARAM values sent with this message
+    AKDN_EDIT_ONCLOSE:
+      PostMessage(AkelData.hMainWnd, AKDN_EDIT_ONSTART, 0, 0);
+    // Edit window is created
+    AKDN_EDIT_ONSTART:
+      SetHeaderInfo;
+    // Document is opened
+    AKDN_OPENDOCUMENT_FINISH:
+      SetHeaderInfo;
   end;
 
   if (pwpd <> nil) and Assigned(pwpd.NextProc) then
@@ -1495,7 +1521,7 @@ begin
 
   // Subclass main window to catch doc load event
   pwpd := nil;
-  SendMessage(AkelData.hMainWnd, AKD_SETMAINPROC, WPARAM(@Hook), LPARAM(@pwpd));
+  SendMessage(AkelData.hMainWnd, AKD_SETMAINPROC, WPARAM(@HeaderInfoSubcl), LPARAM(@pwpd));
 
   HeaderInfoInited := True;
 end;
@@ -1525,8 +1551,12 @@ begin
 
   // Currently SDI mode only
   if pd.nMDI = WMD_SDI then
+  begin
     // This init function won't perform inits if not needed
     InitHeaderInfo(pd);
+    // Set header for already loaded document (if the function is called not on application start)
+    SetHeaderInfo;
+  end;
 
   // Stay in memory and show as active
   pd.nUnload := UD_NONUNLOAD_ACTIVE;

@@ -41,6 +41,7 @@
 			<DCC_DebugInformation>false</DCC_DebugInformation>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2)'!=''">
+			<DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
 			<DCC_ExeOutput>..\_AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
 			<DCC_DependencyCheckOutputName>..\_AkelPad\AkelFiles\Plugs\FileInfoD2010.dll</DCC_DependencyCheckOutputName>
 			<DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
@@ -91,7 +92,7 @@
 						<VersionInfo Name="MajorVer">0</VersionInfo>
 						<VersionInfo Name="MinorVer">7</VersionInfo>
 						<VersionInfo Name="Release">0</VersionInfo>
-						<VersionInfo Name="Build">1</VersionInfo>
+						<VersionInfo Name="Build">4</VersionInfo>
 						<VersionInfo Name="Debug">False</VersionInfo>
 						<VersionInfo Name="PreRelease">False</VersionInfo>
 						<VersionInfo Name="Special">False</VersionInfo>
@@ -103,7 +104,7 @@
 					<VersionInfoKeys>
 						<VersionInfoKeys Name="CompanyName"/>
 						<VersionInfoKeys Name="FileDescription">AkelPad text editor plugin</VersionInfoKeys>
-						<VersionInfoKeys Name="FileVersion">0.7.0.1</VersionInfoKeys>
+						<VersionInfoKeys Name="FileVersion">0.7.0.4</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName">FileInfo</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalCopyright">Fr0sT</VersionInfoKeys>
 						<VersionInfoKeys Name="LegalTrademarks"/>
