@@ -10,6 +10,8 @@
     + Copy path to clipboard
     + Rename file (!)
     + Copy statistics to clipboard
+  Also provides resident function "HeaderInfo" which shows AkelPad version and
+    full path to a current file in AkelPad window header (SDI mode only for now).
 
          *****************************************)
 
@@ -122,7 +124,20 @@ type
     property State: TThreadState read FState;
   end;
 
-const
+  TPluginCommand = (cmdBrowse, cmdCopyPath, cmdRename, cmdGetReport);
+
+const // Constants for Main function
+  PluginCommands: array[TPluginCommand] of string =
+    ('browse', 'copypath', 'rename', 'report');
+  CopyPathParams: array[0..2] of string =
+    ('name', 'namenoext', 'path');
+  BrowseCmd = 'explorer.exe /e, /select, %s';
+  ReportPattProp = '%s: %s'+NL;       // vars: prop name / prop value
+  ReportPattAll = '== %s =='+NL+      // vars: filename / file props / doc props
+                  '%s'+NL+
+                  '*****'+NL+
+                  '%s';
+
   WordsPerCycle = 2000;  {}
   CharsPerCycle = 5000;  {}
 
@@ -138,19 +153,11 @@ const
   //   lParam: 0
   MSG_ICON_EXTRACTED = MSG_BASE + 2;
 
-type
-  TPluginCommand = (cmdBrowse, cmdCopyPath, cmdRename, cmdGetReport);
-const
-  PluginCommands: array[TPluginCommand] of string =
-    ('browse', 'copypath', 'rename', 'report');
-  CopyPathParams: array[0..2] of string =
-    ('name', 'namenoext', 'path');
-  BrowseCmd = 'explorer.exe /e, /select, %s';
-  ReportPattProp = '%s: %s'+NL;       // vars: prop name / prop value
-  ReportPattAll = '== %s =='+NL+      // vars: filename / file props / doc props
-                  '%s'+NL+
-                  '*****'+NL+
-                  '%s';
+const // Constants for HeaderInfo function
+  // 0s - file name
+  // 1s - AkelPad version
+  // 2s - file path
+  HeaderFmt = '%0s - AkelPad %1s [%2s]';
 
 // Interface
 
@@ -194,14 +201,21 @@ const
 
 // Global variables
 
-var
-  PluginCommand: TPluginCommand = TPluginCommand(-1);
-  CommandParam: string;
+var // Variables for all functions
   FileStats: TFileStats;
   AkelData: TAkelData;
+
+var // Variables for Main function
+  PluginCommand: TPluginCommand = TPluginCommand(-1);
+  CommandParam: string;
   MainDlg: TMainDlg;
   CountThread: TCountThread;
   hiWarn: HICON;
+
+var // Variables for HeaderInfo function
+  pwpd: PWNDPROCDATA;
+  HeaderInfoInited: Boolean = False;
+  AkelVer: string;
 
 {$REGION 'SERVICE FUNCTIONS'}
 
@@ -1296,7 +1310,7 @@ end;
 
 {$ENDREGION}
 
-{$REGION 'MAIN PLUGIN FUNCTIONS'}
+{$REGION 'MAIN PLUGIN FUNCTION'}
 
 // initialize stuff with given PLUGINDATA members
 procedure Init(var pd: TPLUGINDATA);
@@ -1340,6 +1354,7 @@ begin
   end;
 
   //...
+
 end;
 
 // do main work here
@@ -1386,6 +1401,8 @@ begin
 
   FreeAndNil(CountThread);
   DestroyIcon(FileStats.hIcon);
+  Finalize(FileStats);
+  ZeroMem(FileStats, SizeOf(FileStats));
   FreeAndNil(MainDlg);
   DestroyIcon(hiWarn);
 end;
@@ -1399,7 +1416,7 @@ begin
   pv.pPluginName := PAnsiChar(PluginName);
 end;
 
-// Plugin extern function
+// ~~ FILEINFO:MAIN extern function ~~
 procedure Main(var pd: TPLUGINDATA); cdecl;
 begin
   // Function doesn't support autoload
@@ -1417,22 +1434,122 @@ begin
   Finish;
 end;
 
+{$ENDREGION}
+
+{$REGION 'HEADERINFO PLUGIN FUNCTION'}
+
+function Hook(hWnd: HWND; uMsg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
+var
+  ei: TEDITINFO;
+  s: string;
+begin
+//OutputDebugString(pchar(inttostr(umsg)));
+
+  // Document is opened
+  if uMsg = AKDN_OPENDOCUMENT_FINISH then
+  begin
+    ZeroMem(ei, SizeOf(ei));
+    if (AkelData.hMainWnd <> 0) and
+       (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0) then
+    begin
+      if ei.wszFile <> nil then
+        FileStats.FileName := string(ei.wszFile)
+      else if ei.szFile <> nil then
+        FileStats.FileName := string(AnsiString(ei.szFile));
+
+      s := Format(HeaderFmt, [ExtractFileName(FileStats.FileName), AkelVer,
+                              ExtractFilePath(FileStats.FileName)]);
+      SetWindowText(AkelData.hMainWnd, PChar(s));
+
+      OutputDebugString(pchar(s));
+    end;
+
+  end;
+
+  if (pwpd <> nil) and Assigned(pwpd.NextProc) then
+    Result := pwpd.NextProc(hWnd, uMsg, wParam, lParam)
+  else
+    Result := 0;
+end;
+
+// Init stuff for HeaderExt method
+procedure InitHeaderInfo(var pd: TPLUGINDATA);
+var
+  AkelPath: array[0..MAX_PATH] of Char;
+begin
+  if HeaderInfoInited then Exit;
+
+  // Set current values
+  ZeroMem(AkelData, SizeOf(AkelData));
+  AkelData.hMainWnd := pd.hMainWnd;
+  AkelData.hEditWnd := pd.hWndEdit;
+  SetCurrLang(PRIMARYLANGID(pd.wLangModule));
+
+  // Get Akel version
+  if AkelVer = '' then
+  begin
+    ZeroMem(AkelPath, SizeOf(AkelPath));
+    GetModuleFileName(pd.hInstanceEXE, AkelPath, SizeOf(AkelPath));
+    AkelVer := FormatFileVersion(GetFileVersion(string(PChar(@AkelPath))));
+  end;
+
+  // Subclass main window to catch doc load event
+  pwpd := nil;
+  SendMessage(AkelData.hMainWnd, AKD_SETMAINPROC, WPARAM(@Hook), LPARAM(@pwpd));
+
+  HeaderInfoInited := True;
+end;
+
+// Cleanup stuff for HeaderInfo method
+procedure FinHeaderInfo;
+begin
+  if not HeaderInfoInited then Exit;
+
+  // Remove main window subclassing
+  SendMessage(AkelData.hMainWnd, AKD_SETMAINPROC, WPARAM(nil), LPARAM(@pwpd));
+  pwpd := nil;
+
+  Finalize(FileStats);
+  ZeroMem(FileStats, SizeOf(FileStats));
+
+  HeaderInfoInited := False;
+end;
+
+// ~~ FILEINFO:HEADERINFO extern function ~~
+procedure HeaderInfo(var pd: TPLUGINDATA); cdecl;
+begin
+  // Function does support autoload
+  pd.dwSupport := pd.dwSupport or PDS_SUPPORTALL;
+  if (pd.dwSupport and PDS_GETSUPPORT) <> 0 then
+    Exit;
+
+  // Currently SDI mode only
+  if pd.nMDI = WMD_SDI then
+    // This init function won't perform inits if not needed
+    InitHeaderInfo(pd);
+
+  // Stay in memory and show as active
+  pd.nUnload := UD_NONUNLOAD_ACTIVE;
+end;
+
+{$ENDREGION}
+
 // Entry point
 procedure CustomDllProc(dwReason: DWORD);
 begin
   case dwReason of
     DLL_PROCESS_ATTACH: ;
-    DLL_PROCESS_DETACH: ;
+    DLL_PROCESS_DETACH:
+      FinHeaderInfo;
     DLL_THREAD_ATTACH:  ;
     DLL_THREAD_DETACH:  ;
   end;
 end;
 
-{$ENDREGION}
-
 exports
   DllAkelPadID,
-  Main;
+  Main,
+  HeaderInfo;
 
 begin
   DllProc := @CustomDllProc;

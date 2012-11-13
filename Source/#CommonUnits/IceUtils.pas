@@ -5,11 +5,12 @@ interface
 uses SysUtils, Windows, Messages;
 
 type
-
   TTimeScale = (tsSys, tsLoc); // шкала времени для FileTime функций: локальная/UTC
+  TFileVersion = array[1..4] of Word; // версия файла
 
 const
   NL = #13#10;
+  VersionFmt = '%d.%d.%d.%d';
 
   function IfTh(AValue: Boolean; const ATrue: string; const AFalse: string = ''): string; overload; inline;
   function IfTh(AValue: Boolean; const ATrue: Integer; const AFalse: Integer = 0): Integer; overload; inline;
@@ -20,6 +21,8 @@ const
   function GetFileTime(FileName: string; Scale: TTimeScale; pCreation, pLastAccess, pLastWrite: PDateTime): Boolean;
   function SetFileTime(FileName: string; Scale: TTimeScale; Creation, LastAccess, LastWrite: TDateTime): Boolean;
   function GetFileSize(FileName: string): Int64;
+  function GetFileVersion(const Path: string): TFileVersion;
+  function FormatFileVersion(const FileVer: TFileVersion; VerFmt: string = VersionFmt): string;
   // strings
   function ThousandsDivide(num: Integer): string; overload; inline;
   function ThousandsDivide(num: Int64): string; overload; inline;
@@ -41,6 +44,34 @@ begin
   Result := 0;
   if not GetFileAttributesEx(PChar(FileName), GetFileExInfoStandard, @attr) then Exit;
   Result := (Int64(attr.nFileSizeHigh) shl (SizeOf(attr.nFileSizeHigh)*8)) or Int64(attr.nFileSizeLow);
+end;
+
+// получает версию указанного файла в виде 4-х чисел
+function GetFileVersion(const Path: string): TFileVersion;
+var
+  H, Len: DWORD;
+  Data: array of Byte;
+  pffi: PVSFixedFileInfo;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+
+  Len := GetFileVersionInfoSize(PChar(Path), H);
+  if Len = 0 then Exit;
+
+  SetLength(Data, Len);
+  if not GetFileVersionInfo(PChar(Path), H, Len, @Data[0]) then Exit;
+  if not VerQueryValue(@Data[0], '\', Pointer(pffi), Len) then Exit;
+
+  Result[1] := HiWord(pffi^.dwFileVersionMS);
+  Result[2] := LoWord(pffi^.dwFileVersionMS);
+  Result[3] := HiWord(pffi^.dwFileVersionLS);
+  Result[4] := LoWord(pffi^.dwFileVersionLS);
+end;
+
+// Форматирует версию по указанному шаблону
+function FormatFileVersion(const FileVer: TFileVersion; VerFmt: string): string;
+begin
+  Result := Format(VerFmt, [FileVer[1], FileVer[2], FileVer[3], FileVer[4]]);
 end;
 
 // ********* Временные метки файлов ********* \\

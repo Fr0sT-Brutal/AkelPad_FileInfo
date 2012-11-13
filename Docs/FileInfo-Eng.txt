@@ -31,6 +31,7 @@ Also allows performing additional commands upon the current file:
 	- Rename
 	- Copy statistics to clipboard
 
+Also provides resident function "HeaderInfo" which shows AkelPad version and full path to a current file in AkelPad window header (SDI mode only for now).
 
 *** Features ***
 
@@ -43,6 +44,8 @@ Also allows performing additional commands upon the current file:
 FileInfo::Main
 Main function.
 
+FileInfo::HeaderInfo
+Resident function to show AkelPad version and full path to a current file in AkelPad window header. Mainly intended for use in autorun mode (set the corresponding checkbox in Plugin functions list to autorun it).
 
 *** External call FileInfo::Main ***
 
