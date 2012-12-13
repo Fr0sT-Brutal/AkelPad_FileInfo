@@ -2,11 +2,12 @@ unit IceUtils;
 
 interface
 
-uses SysUtils, Windows, Messages;
+uses SysUtils, StrUtils, Windows, Messages;
 
 type
-  TTimeScale = (tsSys, tsLoc); // шкала времени для FileTime функций: локальная/UTC
-  TFileVersion = array[1..4] of Word; // версия файла
+  TTimeScale = (tsSys, tsLoc); // С€РєР°Р»Р° РІСЂРµРјРµРЅРё РґР»СЏ FileTime С„СѓРЅРєС†РёР№: Р»РѕРєР°Р»СЊРЅР°СЏ/UTC
+  TFileVersion = array[1..4] of Word; // РІРµСЂСЃРёСЏ С„Р°Р№Р»Р°
+  TReplTokenCallback = reference to function(var Token: string): Boolean;
 
 const
   NL = #13#10;
@@ -26,6 +27,9 @@ const
   // strings
   function ThousandsDivide(num: Integer): string; overload; inline;
   function ThousandsDivide(num: Int64): string; overload; inline;
+  function ReplaceTokens(const Patt: string; TokenStart, TokenEnd: Char; EatUnmatched: Boolean;
+                         Callback: TReplTokenCallback): string;
+  function FindStr(const AText: string; const AValues: array of string): Integer;
   // binary
   procedure ZeroMem(var Dest; count: Integer); inline;
   // classes and stuff
@@ -35,9 +39,9 @@ const
 
 implementation
 
-// ********* Файлы, имена файлов ********* \\
+// ********* Р¤Р°Р№Р»С‹, РёРјРµРЅР° С„Р°Р№Р»РѕРІ ********* \\
 
-// получение размера файла только по имени (а не по хэндлу, как GetFileSize, + поддерживает размеры > 4 Гб
+// РїРѕР»СѓС‡РµРЅРёРµ СЂР°Р·РјРµСЂР° С„Р°Р№Р»Р° С‚РѕР»СЊРєРѕ РїРѕ РёРјРµРЅРё (Р° РЅРµ РїРѕ С…СЌРЅРґР»Сѓ, РєР°Рє GetFileSize, + РїРѕРґРґРµСЂР¶РёРІР°РµС‚ СЂР°Р·РјРµСЂС‹ > 4 Р“Р±
 function GetFileSize(FileName: string): Int64;
 var attr: WIN32_FILE_ATTRIBUTE_DATA;
 begin
@@ -46,7 +50,7 @@ begin
   Result := (Int64(attr.nFileSizeHigh) shl (SizeOf(attr.nFileSizeHigh)*8)) or Int64(attr.nFileSizeLow);
 end;
 
-// получает версию указанного файла в виде 4-х чисел
+// РїРѕР»СѓС‡Р°РµС‚ РІРµСЂСЃРёСЋ СѓРєР°Р·Р°РЅРЅРѕРіРѕ С„Р°Р№Р»Р° РІ РІРёРґРµ 4-С… С‡РёСЃРµР»
 function GetFileVersion(const Path: string): TFileVersion;
 var
   H, Len: DWORD;
@@ -68,15 +72,15 @@ begin
   Result[4] := LoWord(pffi^.dwFileVersionLS);
 end;
 
-// Форматирует версию по указанному шаблону
+// Р¤РѕСЂРјР°С‚РёСЂСѓРµС‚ РІРµСЂСЃРёСЋ РїРѕ СѓРєР°Р·Р°РЅРЅРѕРјСѓ С€Р°Р±Р»РѕРЅСѓ
 function FormatFileVersion(const FileVer: TFileVersion; VerFmt: string): string;
 begin
   Result := Format(VerFmt, [FileVer[1], FileVer[2], FileVer[3], FileVer[4]]);
 end;
 
-// ********* Временные метки файлов ********* \\
+// ********* Р’СЂРµРјРµРЅРЅС‹Рµ РјРµС‚РєРё С„Р°Р№Р»РѕРІ ********* \\
 
-// преобразования DateTime <-> TFileTime, используемый виндой
+// РїСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёСЏ DateTime <-> TFileTime, РёСЃРїРѕР»СЊР·СѓРµРјС‹Р№ РІРёРЅРґРѕР№
 function DateTimeToFileTime(Scale: TTimeScale; aDate: TDateTime): TFileTime;
 var st: TSystemTime;
 begin
@@ -93,7 +97,7 @@ begin
   Result := SystemTimeToDateTime(st);
 end;
 
-// получение временной метки файла в удобном виде
+// РїРѕР»СѓС‡РµРЅРёРµ РІСЂРµРјРµРЅРЅРѕР№ РјРµС‚РєРё С„Р°Р№Р»Р° РІ СѓРґРѕР±РЅРѕРј РІРёРґРµ
 function GetFileTime(FileName: string; Scale: TTimeScale; pCreation, pLastAccess, pLastWrite: PDateTime): Boolean;
 var attr: WIN32_FILE_ATTRIBUTE_DATA;
 begin
@@ -104,7 +108,7 @@ begin
   if pLastAccess <> nil then pLastAccess^ := FileTimeToDateTime(Scale, attr.ftLastAccessTime);
 end;
 
-// присвоение временных меток файлу, для ненужных полей передавать 0 в параметре
+// РїСЂРёСЃРІРѕРµРЅРёРµ РІСЂРµРјРµРЅРЅС‹С… РјРµС‚РѕРє С„Р°Р№Р»Сѓ, РґР»СЏ РЅРµРЅСѓР¶РЅС‹С… РїРѕР»РµР№ РїРµСЂРµРґР°РІР°С‚СЊ 0 РІ РїР°СЂР°РјРµС‚СЂРµ
 function SetFileTime(FileName: string; Scale: TTimeScale; Creation, LastAccess, LastWrite: TDateTime): Boolean;
 var f: Integer;
     Cr, Acc, Wr: TFileTime;
@@ -121,7 +125,7 @@ begin
   FileClose(f);
 end;
 
-// ********* костыли тернарного оператора ********* \\
+// ********* РєРѕСЃС‚С‹Р»Рё С‚РµСЂРЅР°СЂРЅРѕРіРѕ РѕРїРµСЂР°С‚РѕСЂР° ********* \\
 
 function IfTh(AValue: Boolean; const ATrue: string; const AFalse: string): string;
 begin
@@ -148,9 +152,9 @@ begin
   if AValue then Result := ATrue else Result := AFalse;
 end;
 
-// ********* Строки ********* \\
+// ********* РЎС‚СЂРѕРєРё ********* \\
 
-// Возвращает число в строковом формате с разделёнными тысячными разрядами
+// Р’РѕР·РІСЂР°С‰Р°РµС‚ С‡РёСЃР»Рѕ РІ СЃС‚СЂРѕРєРѕРІРѕРј С„РѕСЂРјР°С‚Рµ СЃ СЂР°Р·РґРµР»С‘РЅРЅС‹РјРё С‚С‹СЃСЏС‡РЅС‹РјРё СЂР°Р·СЂСЏРґР°РјРё
 function ThousandsDivide(num: Integer): string;
 begin
   Result := Format('%.0n', [num+0.0]);
@@ -161,15 +165,62 @@ begin
   Result := Format('%.0n', [num+0.0]);
 end;
 
-// ********* Разное ********* \\
+// РќР°С…РѕРґРёС‚ РІСЃРµ РІС…РѕР¶РґРµРЅРёСЏ СЃС‚СЂРѕРє РјРµР¶РґСѓ СЃРёРјРІРѕР»Р°РјРё TokenStart Рё TokenEnd РІ СЃС‚СЂРѕРєРµ Patt
+// Рё Р·Р°РјРµРЅСЏРµС‚ РёС… РЅР° СЂРµР·СѓР»СЊС‚Р°С‚ РІС‹РїРѕР»РЅРµРЅРёСЏ С„СѓРЅРєС†РёРё Callback
+// Р¤Р»Р°Рі EatUnmatched РѕРїСЂРµРґРµР»СЏРµС‚, СѓРґР°Р»СЏС‚СЊ Р»Рё РІС…РѕР¶РґРµРЅРёСЏ, РґР»СЏ РєРѕС‚РѕСЂС‹С… Callback
+// РІРѕР·РІСЂР°С‰Р°РµС‚ False (РµСЃР»Рё EatUnmatched = False, С‚Р°РєРёРµ РІС…РѕР¶РґРµРЅРёСЏ РѕСЃС‚Р°СЋС‚СЃСЏ РєР°Рє Р±С‹Р»Рё)
+function ReplaceTokens(const Patt: string; TokenStart, TokenEnd: Char; EatUnmatched: Boolean;
+                       Callback: TReplTokenCallback): string;
+var token: String;
+    curr, txt_beg, pos_beg, pos_end: Integer;
+begin
+  curr := 1; txt_beg := 1; Result := '';
+  // РїРѕРєР° РІ С€Р°Р±Р»РѕРЅРµ РµСЃС‚СЊ С‚РѕРєРµРЅС‹
+  while curr <= Length(Patt) do
+  begin
+    // РІС‹РґРµР»СЏРµРј С‚РѕРєРµРЅ (СЃРёРјРІРѕР»С‹, РѕР±СЂР°РјР»С‘РЅРЅС‹Рµ TokenStart Рё TokenEnd)
+    pos_beg := PosEx(TokenStart, Patt, curr);
+    if pos_beg = 0 then Break;
+    pos_end := PosEx(TokenEnd, Patt, pos_beg+1);
+    if pos_end = 0 then Break;
+    token := Copy(patt, pos_beg+1, pos_end-pos_beg-1);
+    // РІС‹Р·С‹РІР°РµРј callback С„СѓРЅРєС†РёСЋ Рё РґРµР№СЃС‚РІСѓРµРј РїРѕ РµС‘ СЂРµР·СѓР»СЊС‚Р°С‚Р°Рј
+    if not Callback(token) then
+      if EatUnmatched // СЃСЉРµРґР°РµРј РёР»Рё РѕСЃС‚Р°РІР»СЏРµРј РЅРµРѕР±СЂР°Р±РѕС‚Р°РЅРЅС‹Р№ С‚РѕРєРµРЅ
+        then Result := Result + Copy(Patt, txt_beg, pos_beg-txt_beg)
+        else begin Inc(curr); Continue; end
+    else
+      Result := Result + Copy(Patt, txt_beg, pos_beg-txt_beg) + token;
+    // РґРІРёРіР°РµРјСЃСЏ РґР°Р»СЊС€Рµ
+    curr := pos_end+1;
+    txt_beg := pos_end+1;
+  end;
+  // РґРѕР±Р°РІР»СЏРµРј РѕСЃС‚Р°РІС€РёР№СЃСЏ С…РІРѕСЃС‚ С‚РµРєСЃС‚Р° РїРѕСЃР»Рµ РїРѕСЃР»РµРґРЅРµРіРѕ С‚РѕРєРµРЅР°
+  Result := Result + Copy(Patt, txt_beg, Length(Patt));
+end;
 
-// Заполнение буфера нулями, отличие от ZeroMemory - inline и другие типы параметров
+// РєРѕРїРёРїР°СЃС‚Р° РёР· StrUtils, С‚РѕР»СЊРєРѕ РЅР°РјРЅРѕРіРѕ Р±С‹СЃС‚СЂРµРµ Р·Р° СЃС‡С‘С‚ РѕР±С‹С‡РЅРѕРіРѕ СЃСЂР°РІРЅРµРЅРёСЏ
+function FindStr(const AText: string; const AValues: array of string): Integer;
+var I: Integer;
+begin
+  for I := Low(AValues) to High(AValues) do
+    if AText = AValues[I] then
+    begin
+      Result := I;
+      Exit;
+    end;
+  Result := -1;
+end;
+
+// ********* Р Р°Р·РЅРѕРµ ********* \\
+
+// Р—Р°РїРѕР»РЅРµРЅРёРµ Р±СѓС„РµСЂР° РЅСѓР»СЏРјРё, РѕС‚Р»РёС‡РёРµ РѕС‚ ZeroMemory - inline Рё РґСЂСѓРіРёРµ С‚РёРїС‹ РїР°СЂР°РјРµС‚СЂРѕРІ
 procedure ZeroMem(var Dest; count: Integer);
 begin
   FillChar(Dest, count, 0);
 end;
 
-// Закрытие и обнуление хэндла. Не производит проверку на успешность!
+// Р—Р°РєСЂС‹С‚РёРµ Рё РѕР±РЅСѓР»РµРЅРёРµ С…СЌРЅРґР»Р°. РќРµ РїСЂРѕРёР·РІРѕРґРёС‚ РїСЂРѕРІРµСЂРєСѓ РЅР° СѓСЃРїРµС€РЅРѕСЃС‚СЊ!
 procedure CloseAndZeroHandle(var Handle: THandle);
 begin
   if Handle > 0 then CloseHandle(Handle);

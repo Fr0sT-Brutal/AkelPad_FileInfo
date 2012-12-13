@@ -1,4 +1,4 @@
-﻿        (*****************************************
+        (*****************************************
             FileInfo plugin for AkelPad editor
                          © Fr0sT
 
@@ -25,7 +25,7 @@
    * Commands: Open in assoc program, Show explorer menu, System props
    * HeaderInfo:
       easy
-        *
+
       medium
         modified state
         MDI
@@ -48,8 +48,14 @@ library FileInfo;
 {$R *.RES}
 
 uses
-  Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
-  IceUtils, ResDialog,
+  Windows,
+  Messages,
+  SysUtils,
+  Character,
+  CommCtrl,
+  ShellApi,
+  IceUtils,
+  ResDialog,
   AkelDLL_h in '#AkelDefs\AkelDLL_h.pas',
   AkelEdit_h in '#AkelDefs\AkelEdit_h.pas',
   Lang in 'Lang.pas';
@@ -161,12 +167,20 @@ const // Constants for Main function
   MSG_ICON_EXTRACTED = MSG_BASE + 2;
 
 const // Constants for HeaderInfo function
-  // 0s - file name
-  // 1s - AkelPad version
-  // 2s - file path
-  HeaderFmt = '%0s - AkelPad %1s [%2s]';
-  // 0s - AkelPad version
-  HeaderEmptyFmt = '[Empty] - AkelPad %0s';
+  Platf =
+    {$IF (CompilerVersion >= 23) and Defined(CPUX64)}
+      '64'
+    {$ELSE}
+      '32'
+    {$IFEND};
+
+  // Format of header for normal files
+  HeaderNormalFmt = '%FileName% - AkelPad x%Platf% %Version% [%FilePath%]';
+  // Format of header for unsaved files
+  HeaderUnsavedFmt = '[%sUnsaved%] - AkelPad x%Platf% %Version%';
+
+  HeaderTokens: array [0..4] of string =
+    ('FileName', 'Platf', 'Version', 'FilePath', 'sUnsaved');
 
 // Interface
 
@@ -312,8 +326,8 @@ const
 function RunCallback: Boolean;
 begin
   Result := True;
-  if not Assigned(CountCallback) then Exit;
-  CountCallback(AkelData, CountProgress, Result);
+  if Assigned(CountCallback) then
+    CountCallback(AkelData, CountProgress, Result);
 end;
 
 // Recalculate current percent and launch callback
@@ -326,7 +340,8 @@ begin
   WordCnt := 0;
   CharCnt := 0;
   // get current percent value
-  CountProgress.PercentDone := Trunc(PercentPerStage*0 + CharsProcessed*PercentPerStage/CountProgress.Counters.Chars);
+  if CountProgress.Counters.Chars > 0 then
+    CountProgress.PercentDone := Trunc(PercentPerStage*0 + CharsProcessed*PercentPerStage/CountProgress.Counters.Chars);
   Result := RunCallback;
 end;
 
@@ -338,7 +353,8 @@ begin
   Inc(CharsProcessed, CharCnt);
   CharCnt := 0;
   // get current percent value
-  CountProgress.PercentDone := Trunc(PercentPerStage*1 + CharsProcessed*PercentPerStage/CountProgress.Counters.Chars);
+  if CountProgress.Counters.Chars > 0 then
+    CountProgress.PercentDone := Trunc(PercentPerStage*1 + CharsProcessed*PercentPerStage/CountProgress.Counters.Chars);
   Result := RunCallback;
 end;
 
@@ -1461,13 +1477,20 @@ begin
     else if ei.szFile <> nil then
       FileStats.FileName := string(AnsiString(ei.szFile));
 
-    if FileStats.FileName <> ''
-      then
-        s := Format(HeaderFmt, [ExtractFileName(FileStats.FileName), AkelVer,
-                                ExcludeTrailingBackslash(ExtractFilePath(FileStats.FileName))])
-      else
-        s := Format(HeaderEmptyFmt, [AkelVer]);
-
+    s := ReplaceTokens(IfTh(FileStats.FileName <> '', HeaderNormalFmt, HeaderUnsavedFmt), '%', '%', False,
+                       function(var Token: string): Boolean
+                       begin
+                         Result := True;
+                         case FindStr(Token, HeaderTokens) of
+                           0: Token := ExtractFileName(FileStats.FileName);
+                           1: Token := Platf;
+                           2: Token := AkelVer;
+                           3: Token := ExcludeTrailingBackslash(ExtractFilePath(FileStats.FileName));
+                           4: Token := LangString(idUnsaved);
+                           else
+                             Result := False;
+                         end;
+                       end);
     SetWindowText(AkelData.hMainWnd, PChar(s));
   end;
 end;
