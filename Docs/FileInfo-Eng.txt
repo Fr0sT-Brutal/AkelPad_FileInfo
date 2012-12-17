@@ -47,27 +47,40 @@ Main function.
 FileInfo::HeaderInfo
 Resident function to show AkelPad version and full path to a current file in AkelPad window header. Mainly intended for use in autorun mode (set the corresponding checkbox in Plugin functions list to autorun it).
 
+FileInfo::BrowseFile
+Browse for current file in Explorer
+
+FileInfo::CopyPath
+Copy full path (default) or some part of it (if parameter specified) to clipboard
+
+FileInfo::Rename
+Rename file (you will be prompted for a new name with dialog)
+
+FileInfo::GetReport
+Copy file statistics to clipboard
+
 *** External call FileInfo::Main ***
 
 Call("FileInfo::Main")
   Show main dialog
 
-Call("FileInfo::Main", "STRING")
-  Perform a command with current file. Main dialog won't be shown and plugin will be finished right after performing a command. 
-  Parameters:
-    STRING
-      Command to perform. Following commands are supported:
-        browse - browse for current file in Explorer
-        copypath - copy full path (default) or some part of it (if parameter specified) to clipboard
-        	Parameters:
-        		name - name and extension (AkelPad.exe)
-        		namenoext - name only (AkelPad)
-        		path - path only (C:\Soft\AkelPad\)
-        	Example:
-        		Call("FileInfo::Main", "copypath", "namenoext")
-        rename - rename file (you will be prompted for a new name with dialog)
-        report - copy file statistics to clipboard
+Call("FileInfo::BrowseFile")
+  Browse for current file in Explorer
 
+Call("FileInfo::CopyPath", "STRING")
+  Without parameters: copy full path to clipboard. With parameters: copy some part of the path only.
+  Parameters:
+	  name - name and extension ("AkelPad.ini")
+	  namenoext - name only ("AkelPad")
+	  path - path only ("C:\Soft\AkelPad\")
+  Example:
+  Call("FileInfo::CopyPath", "namenoext")
+
+Call("FileInfo::Rename")
+Rename file (you will be prompted for a new name with dialog)
+
+Call("FileInfo::GetReport")
+Copy file statistics to clipboard
 
 *** Credits ***
 

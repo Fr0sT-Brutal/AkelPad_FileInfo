@@ -4,10 +4,10 @@
 
   Shows properties of a currently edited file as long as some
   statistics for its contents.
-  Something similar to Stats plugin but provides more info.
+  Something similar to Stats plugin but provides much more info.
   Additional functions:
     + Browse for file in Explorer
-    + Copy path to clipboard
+    + Copy path (name, name without ext...) to clipboard
     + Rename file (!)
     + Copy statistics to clipboard
   Also provides resident function "HeaderInfo" which shows AkelPad version and
@@ -20,16 +20,16 @@
    ---
 
  TO DO:
-   * replace "commands" with separate plugin functions (?)
+   * tooltip when report is copied to CB
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
    * HeaderInfo:
       easy
-
+        ---
       medium
-        modified state
-        MDI
-        customizable header format
+        modified state (need catch edit/save events)
+        MDI (need catch tab change events)
+        customizable header format (need settings dialog, read/write riutines,...)
 
  ???
    * icons for buttons
@@ -48,12 +48,7 @@ library FileInfo;
 {$R *.RES}
 
 uses
-  Windows,
-  Messages,
-  SysUtils,
-  Character,
-  CommCtrl,
-  ShellApi,
+  Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
   IceUtils,
   ResDialog,
   AkelDLL_h in '#AkelDefs\AkelDLL_h.pas',
@@ -66,6 +61,13 @@ const
   PluginName: AnsiString = 'FileInfo';
 
 type
+  TPluginFunction = (fnMain, fnBrowse, fnCopyPath, fnRename, fnGetReport, fnHeaderInfo);
+  TPluginFunctions = set of TPluginFunction;
+  TCopyPathParam = (cppAll, cppName, cppNameNoExt, cppPath);
+
+  TPluginInitProc = function(var pd: TPLUGINDATA): Boolean;
+  TPluginFinProc = procedure;
+
   // statistics that are counted in the separate thread
   TDocCountState = (cntNotActual, cntInProcess, cntCompleted);
 
@@ -137,20 +139,11 @@ type
     property State: TThreadState read FState;
   end;
 
-  TPluginCommand = (cmdBrowse, cmdCopyPath, cmdRename, cmdGetReport);
+const // Common constants
+  PluginFunctions: array[TPluginFunction] of string =
+    ('Main', 'Browse', 'CopyPath', 'Rename', 'GetReport', 'HeaderInfo');
 
 const // Constants for Main function
-  PluginCommands: array[TPluginCommand] of string =
-    ('browse', 'copypath', 'rename', 'report');
-  CopyPathParams: array[0..2] of string =
-    ('name', 'namenoext', 'path');
-  BrowseCmd = 'explorer.exe /e, /select, %s';
-  ReportPattProp = '%s: %s'+NL;       // vars: prop name / prop value
-  ReportPattAll = '== %s =='+NL+      // vars: filename / file props / doc props
-                  '%s'+NL+
-                  '*****'+NL+
-                  '%s';
-
   WordsPerCycle = 2000;  {}
   CharsPerCycle = 5000;  {}
 
@@ -166,6 +159,20 @@ const // Constants for Main function
   //   lParam: 0
   MSG_ICON_EXTRACTED = MSG_BASE + 2;
 
+const // Constants for CopyPath function
+  CopyPathParams: array[TCopyPathParam] of string =
+    ('', 'name', 'namenoext', 'path');
+
+const // Constants for BrowseFile function
+  BrowseCmd = 'explorer.exe /e, /select, %s';
+
+const // Constants for GetReport function
+  ReportPattProp = '%s: %s'+NL;       // vars: prop name / prop value
+  ReportPattAll = '== %s =='+NL+      // vars: filename / file props / doc props
+                  '%s'+NL+
+                  '*****'+NL+
+                  '%s';
+
 const // Constants for HeaderInfo function
   Platf =
     {$IF (CompilerVersion >= 23) and Defined(CPUX64)}
@@ -173,14 +180,15 @@ const // Constants for HeaderInfo function
     {$ELSE}
       '32'
     {$IFEND};
+  Modif = '*';
 
   // Format of header for normal files
-  HeaderNormalFmt = '%FileName% - AkelPad x%Platf% %Version% [%FilePath%]';
+  HeaderNormalFmt = '%FileName%%Modified% - AkelPad x%Platf% %Version% [%FilePath%]';
   // Format of header for unsaved files
   HeaderUnsavedFmt = '[%sUnsaved%] - AkelPad x%Platf% %Version%';
 
-  HeaderTokens: array [0..4] of string =
-    ('FileName', 'Platf', 'Version', 'FilePath', 'sUnsaved');
+  HeaderTokens: array [0..5] of string =
+    ('FileName', 'Modified', 'Platf', 'Version', 'FilePath', 'sUnsaved');
 
 // Interface
 
@@ -227,13 +235,16 @@ const
 var // Variables for all functions
   FileStats: TFileStats;
   AkelData: TAkelData;
+  InitedFuncs: TPluginFunctions = [];
+  FinProcs: array[TPluginFunction] of TPluginFinProc;
 
 var // Variables for Main function
-  PluginCommand: TPluginCommand = TPluginCommand(-1);
-  CommandParam: string;
   MainDlg: TMainDlg;
   CountThread: TCountThread;
   hiWarn: HICON;
+
+var // Variables for CopyPath function
+  CopyPathParam: TCopyPathParam = cppAll;
 
 var // Variables for HeaderInfo function
   pwpd: PWNDPROCDATA;
@@ -616,14 +627,14 @@ end;
 {$REGION 'PLUGIN FUNCTIONS'}
 
 // open the file in explorer
-procedure Browse;
+procedure DoBrowse;
 var si: TStartupInfo;
     pi: TProcessInformation;
     Cmd: string;
 begin
   if FileStats.FileName = '' then
   begin
-    MsgBox(LangString(idPgFileLabelWarnNotSaved), iStop);
+    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
     Exit;
   end;
   ZeroMem(pi, SizeOf(pi));
@@ -635,31 +646,17 @@ begin
   CloseHandle(pi.hThread);
 end;
 
-// copy full file path to clipboard
-procedure CopyPath;
-var s: string;
+// copy file path with name / path only / name with ext / name only to clipboard
+// Uses external variable CommandParam
+procedure DoCopyPath(param: TCopyPathParam);
+var
+  s: string;
 begin
-  if FileStats.FileName = '' then
-  begin
-    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
-    Exit;
-  end;
-
-  if CommandParam = '' then
-    s := FileStats.FileName
-  else
-  if CommandParam = CopyPathParams[0] then
-    s := ExtractFileName(FileStats.FileName)
-  else
-  if CommandParam = CopyPathParams[1] then
-    s := ChangeFileExt(ExtractFileName(FileStats.FileName), '')
-  else
-  if CommandParam = CopyPathParams[2] then
-    s := ExtractFilePath(FileStats.FileName)
-  else
-  begin
-    MsgBox(Format(LangString(idMsgInvalidParam), [CommandParam]), iStop);
-    Exit;
+  case param of
+    cppAll       : s := FileStats.FileName;
+    cppName      : s := ExtractFileName(FileStats.FileName);
+    cppNameNoExt : s := ChangeFileExt(ExtractFileName(FileStats.FileName), '');
+    cppPath      : s := ExtractFilePath(FileStats.FileName);
   end;
 
   CopyTextToCB(s, AkelData.hMainWnd);
@@ -702,7 +699,7 @@ end;
 
 // rename the current file
 //   NewName - name to rename to (without path). If empty, an InputBox will be shown
-function Rename(NewName: string): Boolean;
+function DoRename(NewName: string): Boolean;
 var
   NewFullName: string;
   InputBox: TResDialog;
@@ -716,12 +713,6 @@ var
   od: TOPENDOCUMENT;
 begin
   Result := False;
-
-  if FileStats.FileName = '' then
-  begin
-    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
-    Exit;
-  end;
 
   // ask a user for a new file name
   if NewName = '' then
@@ -802,7 +793,7 @@ begin
     FileStats.Counters := CountProgress.Counters;
 end;
 
-procedure GetReport;
+procedure DoGetReport;
 var
   FileProps, DocProps, Total: string;
   CPInfo: TCPInfoEx;
@@ -995,7 +986,7 @@ begin
             // if edit is modified, send command to the parent dialog
             if SendMessage(Msg.hwnd, EM_GETMODIFY, 0, 0) <> 0 then
             begin
-              if not Rename(FPages[tabFile].ItemText[IDC_EDT_FILENAME]) then Exit;
+              if not DoRename(FPages[tabFile].ItemText[IDC_EDT_FILENAME]) then Exit;
               // refresh file props
               GetFileInfo(AkelData, FileStats);
               FileStats.hIcon := ExtractShellIcon(FileStats.FileName);
@@ -1103,7 +1094,7 @@ begin
         BN_CLICKED:
           case LoWord(Msg.wParam) of
             // "Report" button
-            IDC_BTN_REPORT: GetReport;
+            IDC_BTN_REPORT: DoGetReport;
           end;
       end;
 
@@ -1314,10 +1305,10 @@ begin
               end;
             // (File page) "Copy path" button
             IDC_BTN_COPYPATH:
-              CopyPath;
+              DoCopyPath(cppAll);
             // (File page) "Browse" button
             IDC_BTN_BROWSE:
-              Browse;
+              DoBrowse;
           end; // case LoWord
 
         EN_CHANGE: // Edit
@@ -1335,84 +1326,77 @@ end;
 
 {$ENDREGION}
 
+{$REGION 'COMMON ROUTINES FOR PLUGIN FUNCTIONS'}
+
+function CommonInit(var pd: TPLUGINDATA; Fn: TPluginFunction; const InitProc: TPluginInitProc; const FinProc: TPluginFinProc): Boolean;
+begin
+  Result := True;
+  // common inits - only if hadn't already inited any of the functions
+  if InitedFuncs = [] then
+  begin
+    ZeroMem(AkelData, SizeOf(AkelData));
+    SetCurrLang(PRIMARYLANGID(pd.wLangModule));
+  end;
+  AkelData.hMainWnd := pd.hMainWnd;
+  AkelData.hEditWnd := pd.hWndEdit;
+  // specific function init - only if hadn't already inited this function
+  if not (Fn in InitedFuncs) then
+  begin
+    Include(InitedFuncs, Fn);
+    if Assigned(InitProc) then
+      Result := InitProc(pd);
+    FinProcs[Fn] := FinProc;
+  end;
+end;
+
+procedure CommonFinish(Fn: TPluginFunction);
+begin
+  // Personal finish - or finish all if Fn = -1
+  if Fn = TPluginFunction(-1) then
+    for Fn in InitedFuncs do
+    begin
+      if Assigned(FinProcs[Fn]) then
+        FinProcs[Fn];
+      Exclude(InitedFuncs, Fn);
+    end
+  else
+    begin
+      if Assigned(FinProcs[Fn]) then
+        FinProcs[Fn];
+      Exclude(InitedFuncs, Fn);
+    end;
+  // Common cleanup if all finished
+  if InitedFuncs = [] then
+  begin
+    Finalize(FileStats);
+    ZeroMem(FileStats, SizeOf(FileStats));
+  end;
+end;
+
+{$ENDREGION}
+
 {$REGION 'MAIN PLUGIN FUNCTION'}
 
 // initialize stuff with given PLUGINDATA members
-procedure Init(var pd: TPLUGINDATA);
-var
-  sCmd: string;
-  TmpCmd: TPluginCommand;
-  AkelParams: TAkelParams;
+function InitMain(var pd: TPLUGINDATA): Boolean;
 begin
-  ZeroMem(AkelData, SizeOf(AkelData));
-  AkelData.hMainWnd := pd.hMainWnd;
-  AkelData.hEditWnd := pd.hWndEdit;
-  SetCurrLang(PRIMARYLANGID(pd.wLangModule));
+  Result := False;
 
-  // check for parameter
-  AkelParams.Init(Pointer(pd.lParam));
-  if AkelParams.Count > 0 then
-  begin
-    sCmd := AkelParams.ParamStr(0); // returns empty string if parameter is NULL
-    // determine command
-    if sCmd <> '' then
-      for TmpCmd := Low(TPluginCommand) to High(TPluginCommand) do
-        if sCmd = PluginCommands[TmpCmd] then
-        begin
-          PluginCommand := TmpCmd;
-          Break;
-        end;
-    // get command parameter if any
-    CommandParam := AkelParams.ParamStr(1);
-  end;
-
-  // warn about invalid/unknown parameter but don't do anything else (!)
-  if (sCmd <> '') and (PluginCommand = TPluginCommand(-1)) then
-    MsgBox(Format(LangString(idMsgInvalidParam), [sCmd]), iWarn);
-
-  // create dialog and thread only when no command specified
-  if PluginCommand = TPluginCommand(-1) then
-  begin
-    MainDlg := TMainDlg.Create(pd);
-    MainDlg.Persistent := True;
-    CountThread := TCountThread.Create;
-  end;
-
-  //...
-
-end;
-
-// do main work here
-procedure Execute(var pd: TPLUGINDATA);
-begin
   if not GetFileInfo(AkelData, FileStats) then
   begin
     MsgBox(LangString(idMsgGetPropsFail), iStop);
     Exit;
   end;
 
-  // execute command
-  case PluginCommand of
-    cmdBrowse:
-      Browse;
-    cmdCopyPath:
-      CopyPath;
-    cmdRename:
-      Rename('');
-    cmdGetReport:
-      begin
-        GetDocInfo(AkelData, CountCallback);
-        GetReport;
-      end;
-    // no command specified - show GUI and launch thread
-    else
-      if MainDlg.ShowModalCustom = -1 then
-        MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
-  end; // case command
+  MainDlg := TMainDlg.Create(pd);
+  MainDlg.Persistent := True;
+  CountThread := TCountThread.Create;
+
+  Result := True;
 end;
 
 // cleanup
-procedure Finish;
+procedure FinishMain;
 begin
   // ! If dialog window is closed before counting thread finishes its work, the
   // message loop of the host application regains control. And it waits for the
@@ -1425,20 +1409,9 @@ begin
       MainDlg.ProcessMessages;
 
   FreeAndNil(CountThread);
-  DestroyIcon(FileStats.hIcon);
-  Finalize(FileStats);
-  ZeroMem(FileStats, SizeOf(FileStats));
   FreeAndNil(MainDlg);
   DestroyIcon(hiWarn);
-end;
-
-// Identification
-procedure DllAkelPadID(var pv: TPLUGINVERSION); cdecl;
-begin
-  pv.dwAkelDllVersion := AkelDLL;
-  pv.dwExeMinVersion3x := MakeIdentifier(-1, -1, -1, -1);
-  pv.dwExeMinVersion4x := MakeIdentifier(4, 7, 0, 0);
-  pv.pPluginName := PAnsiChar(PluginName);
+  DestroyIcon(FileStats.hIcon);
 end;
 
 // ~~ FILEINFO:MAIN extern function ~~
@@ -1450,13 +1423,158 @@ begin
     Exit;
 
   // Init stuff
-  Init(pd);
-
+  if not CommonInit(pd, fnMain, InitMain, FinishMain) then Exit;
   // Do main job here
-  Execute(pd);
-
+  if MainDlg.ShowModalCustom = -1 then
+    MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
   // Cleanup
-  Finish;
+  CommonFinish(fnMain);
+end;
+
+{$ENDREGION}
+
+{$REGION 'BROWSEFILE PLUGIN FUNCTION'}
+
+// ~~ FILEINFO:BROWSEFILE extern function ~~
+procedure BrowseFile(var pd: TPLUGINDATA); cdecl;
+begin
+  // Function doesn't support autoload
+  pd.dwSupport := pd.dwSupport or PDS_NOAUTOLOAD;
+  if (pd.dwSupport and PDS_GETSUPPORT) <> 0 then
+    Exit;
+
+  // Init stuff
+  if not CommonInit(pd, fnBrowse, nil, nil) then Exit; // no special init/fin actions
+  // Do main job here
+  if not GetFileInfo(AkelData, FileStats) then
+  begin
+    MsgBox(LangString(idMsgGetPropsFail), iStop);
+    Exit;
+  end;
+  DoBrowse;
+  // Cleanup
+  CommonFinish(fnBrowse);
+end;
+
+{$ENDREGION}
+
+{$REGION 'COPYNAME PLUGIN FUNCTION'}
+
+function InitCopyPath(var pd: TPLUGINDATA): Boolean;
+var
+  AkelParams: TAkelParams;
+begin
+  Result := False;
+
+  if not GetFileInfo(AkelData, FileStats) then
+  begin
+    MsgBox(LangString(idMsgGetPropsFail), iStop);
+    Exit;
+  end;
+
+  if FileStats.FileName = '' then
+  begin
+    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
+    Exit;
+  end;
+
+  // check for parameter
+  AkelParams.Init(Pointer(pd.lParam));
+  if AkelParams.Count > 0 then
+  begin
+    // AkelParams.ParamStr(0) returns empty string if parameter is NULL
+    CopyPathParam := TCopyPathParam(FindStr(AkelParams.ParamStr(0), CopyPathParams));
+    // warn about invalid/unknown parameter and exit
+    if CopyPathParam = TCopyPathParam(-1) then
+    begin
+      MsgBox(Format(LangString(idMsgInvalidParam), [AkelParams.ParamStr(0)]), iWarn);
+      Exit;
+    end;
+  end
+  else
+    CopyPathParam := cppAll;
+
+  Result := True;
+end;
+
+// ~~ FILEINFO:COPYPATH extern function ~~
+procedure CopyPath(var pd: TPLUGINDATA); cdecl;
+begin
+  // Function doesn't support autoload
+  pd.dwSupport := pd.dwSupport or PDS_NOAUTOLOAD;
+  if (pd.dwSupport and PDS_GETSUPPORT) <> 0 then
+    Exit;
+  // Init stuff
+  if not CommonInit(pd, fnCopyPath, InitCopyPath, nil) then Exit; // no special fin action
+  // Do main job here
+  DoCopyPath(CopyPathParam);
+  // Cleanup
+  CommonFinish(fnCopyPath);
+end;
+
+{$ENDREGION}
+
+{$REGION 'GETREPORT PLUGIN FUNCTION'}
+
+// ~~ FILEINFO:GETREPORT extern function ~~
+procedure GetReport(var pd: TPLUGINDATA); cdecl;
+begin
+  // Function doesn't support autoload
+  pd.dwSupport := pd.dwSupport or PDS_NOAUTOLOAD;
+  if (pd.dwSupport and PDS_GETSUPPORT) <> 0 then
+    Exit;
+
+  // Init stuff
+  if not CommonInit(pd, fnGetReport, nil, nil) then Exit; // no special init/fin actions
+  // Do main job here
+  if not GetFileInfo(AkelData, FileStats) then
+  begin
+    MsgBox(LangString(idMsgGetPropsFail), iStop);
+    Exit;
+  end;
+  GetDocInfo(AkelData, CountCallback);
+  DoGetReport;
+  // Cleanup
+  CommonFinish(fnGetReport);
+end;
+
+{$ENDREGION}
+
+{$REGION 'RENAME PLUGIN FUNCTION'}
+
+function InitRename(var pd: TPLUGINDATA): Boolean;
+begin
+  Result := False;
+
+  if not GetFileInfo(AkelData, FileStats) then
+  begin
+    MsgBox(LangString(idMsgGetPropsFail), iStop);
+    Exit;
+  end;
+
+  if FileStats.FileName = '' then
+  begin
+    MsgBox(LangString(idPgFileLabelErrNotAFile), iStop);
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+// ~~ FILEINFO:RENAME extern function ~~
+procedure Rename(var pd: TPLUGINDATA); cdecl;
+begin
+  // Function doesn't support autoload
+  pd.dwSupport := pd.dwSupport or PDS_NOAUTOLOAD;
+  if (pd.dwSupport and PDS_GETSUPPORT) <> 0 then
+    Exit;
+
+  // Init stuff
+  if not CommonInit(pd, fnRename, InitRename, nil) then Exit; // no special fin action
+  // Do main job here
+  DoRename('');
+  // Cleanup
+  CommonFinish(fnRename);
 end;
 
 {$ENDREGION}
@@ -1483,10 +1601,11 @@ begin
                          Result := True;
                          case FindStr(Token, HeaderTokens) of
                            0: Token := ExtractFileName(FileStats.FileName);
-                           1: Token := Platf;
-                           2: Token := AkelVer;
-                           3: Token := ExcludeTrailingBackslash(ExtractFilePath(FileStats.FileName));
-                           4: Token := LangString(idUnsaved);
+                           1: Token := IfTh(FileStats.IsModified, Modif);
+                           2: Token := Platf;
+                           3: Token := AkelVer;
+                           4: Token := ExcludeTrailingBackslash(ExtractFilePath(FileStats.FileName));
+                           5: Token := LangString(idUnsaved);
                            else
                              Result := False;
                          end;
@@ -1522,18 +1641,10 @@ begin
 end;
 
 // Init stuff for HeaderExt method
-procedure InitHeaderInfo(var pd: TPLUGINDATA);
+function InitHeaderInfo(var pd: TPLUGINDATA): Boolean;
 var
   AkelPath: array[0..MAX_PATH] of Char;
 begin
-  if HeaderInfoInited then Exit;
-
-  // Set current values
-  ZeroMem(AkelData, SizeOf(AkelData));
-  AkelData.hMainWnd := pd.hMainWnd;
-  AkelData.hEditWnd := pd.hWndEdit;
-  SetCurrLang(PRIMARYLANGID(pd.wLangModule));
-
   // Get Akel version
   if AkelVer = '' then
   begin
@@ -1546,22 +1657,15 @@ begin
   pwpd := nil;
   SendMessage(AkelData.hMainWnd, AKD_SETMAINPROC, WPARAM(@HeaderInfoSubcl), LPARAM(@pwpd));
 
-  HeaderInfoInited := True;
+  Result := True;
 end;
 
 // Cleanup stuff for HeaderInfo method
-procedure FinHeaderInfo;
+procedure FinishHeaderInfo;
 begin
-  if not HeaderInfoInited then Exit;
-
   // Remove main window subclassing
   SendMessage(AkelData.hMainWnd, AKD_SETMAINPROC, WPARAM(nil), LPARAM(@pwpd));
   pwpd := nil;
-
-  Finalize(FileStats);
-  ZeroMem(FileStats, SizeOf(FileStats));
-
-  HeaderInfoInited := False;
 end;
 
 // ~~ FILEINFO:HEADERINFO extern function ~~
@@ -1575,8 +1679,7 @@ begin
   // Currently SDI mode only
   if pd.nMDI = WMD_SDI then
   begin
-    // This init function won't perform inits if not needed
-    InitHeaderInfo(pd);
+    CommonInit(pd, fnHeaderInfo, InitHeaderInfo, FinishHeaderInfo);
     // Set header for already loaded document (if the function is called not on application start)
     SetHeaderInfo;
   end;
@@ -1587,13 +1690,22 @@ end;
 
 {$ENDREGION}
 
+// Identification
+procedure DllAkelPadID(var pv: TPLUGINVERSION); cdecl;
+begin
+  pv.dwAkelDllVersion := AkelDLL;
+  pv.dwExeMinVersion3x := MakeIdentifier(-1, -1, -1, -1);
+  pv.dwExeMinVersion4x := MakeIdentifier(4, 7, 0, 0);
+  pv.pPluginName := PAnsiChar(PluginName);
+end;
+
 // Entry point
 procedure CustomDllProc(dwReason: DWORD);
 begin
   case dwReason of
     DLL_PROCESS_ATTACH: ;
     DLL_PROCESS_DETACH:
-      FinHeaderInfo;
+      CommonFinish(TPluginFunction(-1));
     DLL_THREAD_ATTACH:  ;
     DLL_THREAD_DETACH:  ;
   end;
@@ -1602,6 +1714,10 @@ end;
 exports
   DllAkelPadID,
   Main,
+  BrowseFile,
+  CopyPath,
+  Rename,
+  GetReport,
   HeaderInfo;
 
 begin
