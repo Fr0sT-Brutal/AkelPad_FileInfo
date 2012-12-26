@@ -11,7 +11,7 @@
     + Rename file (!)
     + Copy statistics to clipboard
   Also provides resident function "HeaderInfo" which shows AkelPad version and
-    full path to a current file in AkelPad window header (SDI mode only for now).
+    full path to a current file in AkelPad window header.
 
          *****************************************)
 
@@ -25,10 +25,11 @@
    * Commands: Open in assoc program, Show explorer menu, System props
    * HeaderInfo:
       easy
+		http://akelpad.sourceforge.net/forum/viewtopic.php?p=5837#5837 (saveas)
         ---
       medium
+        differentiate empty and unsaved docs
         modified state (need catch edit/save events)
-        MDI (need catch tab change events)
         customizable header format (need settings dialog, read/write riutines,...)
 
  ???
@@ -182,10 +183,17 @@ const // Constants for HeaderInfo function
     {$IFEND};
   Modif = '*';
 
-  // Format of header for normal files
-  HeaderNormalFmt = '%FileName%%Modified% - AkelPad x%Platf% %Version% [%FilePath%]';
+  // Format of header with AkelPad properties
+  HeaderAkelPropsFmt = 'AkelPad x%Platf% %Version%';
+  // Format of header for empty files
+  HeaderEmptyFmt = HeaderAkelPropsFmt;
   // Format of header for unsaved files
-  HeaderUnsavedFmt = '[%sUnsaved%] - AkelPad x%Platf% %Version%';
+  HeaderUnsavedFmt = '[%sUnsaved%] - ' + HeaderAkelPropsFmt;
+  // Format of header for normal files (SDI mode)
+  HeaderNormalFmtSDI = '%FileName%%Modified% - ' + HeaderAkelPropsFmt + ' [%FilePath%]';
+  // Format of header for normal files ((P)MDI mode)
+  // AkelPad adds [%filename%] to current header so we generate only a half of a header
+  HeaderNormalFmtMDI = '%FileName%%Modified% - ' + HeaderAkelPropsFmt;
 
   HeaderTokens: array [0..5] of string =
     ('FileName', 'Modified', 'Platf', 'Version', 'FilePath', 'sUnsaved');
@@ -248,7 +256,7 @@ var // Variables for CopyPath function
 
 var // Variables for HeaderInfo function
   pwpd: PWNDPROCDATA;
-  HeaderInfoInited: Boolean = False;
+  MD_Mode: Integer = -1; // document mode, see WMD_* constants
   AkelVer: string;
 
 {$REGION 'SERVICE FUNCTIONS'}
@@ -874,6 +882,8 @@ begin
   FAkelData := AkelData;
   FhTargetWnd := TargetWnd;
   FFileName := FileStats.FileName;
+  IsMultiThread := True; // ! we create thread not with TThread so we have to set this flag
+                         // manually to avoid troubles with memory manager
   FhThread := CreateThread(nil, 0, @ThreadProc, Self, 0, FidThread);
   SetThreadPriority(FhThread, THREAD_PRIORITY_BELOW_NORMAL);
 end;
@@ -1581,30 +1591,47 @@ end;
 
 {$REGION 'HEADERINFO PLUGIN FUNCTION'}
 
+{} // should differentiate empty and unsaved
+
 procedure SetHeaderInfo;
 var
   ei: TEDITINFO;
-  s: string;
+  s, fmt, FileName: string;
 begin
   ZeroMem(ei, SizeOf(ei));
-  if (AkelData.hMainWnd <> 0) and
-     (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0) then
+  if AkelData.hMainWnd <> 0 then
   begin
-    if ei.wszFile <> nil then
-      FileStats.FileName := string(ei.wszFile)
-    else if ei.szFile <> nil then
-      FileStats.FileName := string(AnsiString(ei.szFile));
+    if SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0 then
+    begin
+      if ei.wszFile <> nil then
+        FileName := string(ei.wszFile)
+      else if ei.szFile <> nil then
+        FileName := string(AnsiString(ei.szFile))
+      else
+        FileName := '';
 
-    s := ReplaceTokens(IfTh(FileStats.FileName <> '', HeaderNormalFmt, HeaderUnsavedFmt), '%', '%', False,
+      if FileName <> '' then
+        fmt := IfTh(MD_Mode = WMD_SDI, HeaderNormalFmtSDI, HeaderNormalFmtMDI)
+      else
+        fmt := HeaderUnsavedFmt; {}
+    end
+    // Here we go if all (P)MDI frames are closed or some other shit happened. Display AP props only
+    else
+    begin
+      fmt := HeaderAkelPropsFmt;
+      FileName := '';
+    end;
+
+    s := ReplaceTokens(fmt, '%', '%', False,
                        function(var Token: string): Boolean
                        begin
                          Result := True;
                          case FindStr(Token, HeaderTokens) of
-                           0: Token := ExtractFileName(FileStats.FileName);
-                           1: Token := IfTh(FileStats.IsModified, Modif);
+                           0: Token := ExtractFileName(FileName);
+                           1: Token := IfTh(ei.bModified, Modif);
                            2: Token := Platf;
                            3: Token := AkelVer;
-                           4: Token := ExcludeTrailingBackslash(ExtractFilePath(FileStats.FileName));
+                           4: Token := ExcludeTrailingBackslash(ExtractFilePath(FileName));
                            5: Token := LangString(idUnsaved);
                            else
                              Result := False;
@@ -1632,6 +1659,11 @@ begin
     // Document is opened
     AKDN_OPENDOCUMENT_FINISH:
       SetHeaderInfo;
+    // (P)MDI tab is activated
+    AKDN_FRAME_ACTIVATE:
+      SetHeaderInfo;
+    AKDN_FRAME_NOWINDOWS:
+      SetHeaderInfo;
   end;
 
   if (pwpd <> nil) and Assigned(pwpd.NextProc) then
@@ -1652,6 +1684,8 @@ begin
     GetModuleFileName(pd.hInstanceEXE, AkelPath, SizeOf(AkelPath));
     AkelVer := FormatFileVersion(GetFileVersion(string(PChar(@AkelPath))));
   end;
+
+  MD_Mode := pd.nMDI;
 
   // Subclass main window to catch doc load event
   pwpd := nil;
@@ -1676,13 +1710,10 @@ begin
   if (pd.dwSupport and PDS_GETSUPPORT) <> 0 then
     Exit;
 
-  // Currently SDI mode only
-  if pd.nMDI = WMD_SDI then
-  begin
-    CommonInit(pd, fnHeaderInfo, InitHeaderInfo, FinishHeaderInfo);
-    // Set header for already loaded document (if the function is called not on application start)
+  CommonInit(pd, fnHeaderInfo, InitHeaderInfo, FinishHeaderInfo);
+  // Set header for already loaded document (if the function has been called manually)
+  if not pd.bOnStart then
     SetHeaderInfo;
-  end;
 
   // Stay in memory and show as active
   pd.nUnload := UD_NONUNLOAD_ACTIVE;
@@ -1723,6 +1754,4 @@ exports
 begin
   DllProc := @CustomDllProc;
   CustomDllProc(DLL_PROCESS_ATTACH);
-  IsMultiThread := True; // ! we create thread not with TThread so we have to set this flag
-                         // manually to avoid troubles with memory manager
 end.

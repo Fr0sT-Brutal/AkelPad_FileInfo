@@ -8,7 +8,7 @@
 			<AppType>Library</AppType>
 			<FrameworkType>None</FrameworkType>
 			<ProjectVersion>13.4</ProjectVersion>
-			<Platform Condition="'$(Platform)'==''">Win32</Platform>
+			<Platform Condition="'$(Platform)'==''">Win64</Platform>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
 			<Base>true</Base>
@@ -61,7 +61,7 @@
 			<DCC_Define>MiniRTL;$(DCC_Define)</DCC_Define>
 			<DCC_UnitSearchPath>#MiniRTL\XE2;#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
 			<DCC_ImageBase>00400000</DCC_ImageBase>
-			<VerInfo_Build>8</VerInfo_Build>
+			<VerInfo_Build>9</VerInfo_Build>
 			<VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
 			<VerInfo_MajorVer>0</VerInfo_MajorVer>
 			<DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Winapi;$(DCC_Namespace)</DCC_Namespace>
@@ -73,7 +73,7 @@
 			<DCC_S>false</DCC_S>
 			<DCC_F>false</DCC_F>
 			<Manifest_File>None</Manifest_File>
-			<VerInfo_Keys>CompanyName=;FileDescription=AkelPad text editor plugin;FileVersion=0.7.0.8;InternalName=FileInfo;LegalCopyright=Fr0sT;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
+			<VerInfo_Keys>CompanyName=;FileDescription=AkelPad text editor plugin;FileVersion=0.7.0.9;InternalName=FileInfo;LegalCopyright=Fr0sT;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
 			<DCC_E>false</DCC_E>
 			<VerInfo_Locale>1049</VerInfo_Locale>
 		</PropertyGroup>
@@ -118,6 +118,7 @@
 			<Debugger_HostApplication>..\_AkelPad\x64\AkelPad.exe</Debugger_HostApplication>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2_Win32)'!=''">
+			<Debugger_RunParams>D:\Stuff\Download\12.12\cr3-3.1.2-27-arm-armv7a-x86-mips.apk</Debugger_RunParams>
 			<VerInfo_Keys>CompanyName=;FileDescription=;FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
 			<DCC_ExeOutput>..\_AkelPad\x32\AkelFiles\Plugs</DCC_ExeOutput>
 			<VerInfo_Locale>1033</VerInfo_Locale>
