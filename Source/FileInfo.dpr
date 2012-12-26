@@ -257,6 +257,7 @@ var // Variables for CopyPath function
 var // Variables for HeaderInfo function
   pwpd: PWNDPROCDATA;
   MD_Mode: Integer = -1; // document mode, see WMD_* constants
+  Loading: Boolean = False;
   AkelVer: string;
 
 {$REGION 'SERVICE FUNCTIONS'}
@@ -1601,7 +1602,7 @@ begin
   ZeroMem(ei, SizeOf(ei));
   if AkelData.hMainWnd <> 0 then
   begin
-    if SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0 then
+    if not Loading and (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0) then
     begin
       if ei.wszFile <> nil then
         FileName := string(ei.wszFile)
@@ -1615,7 +1616,7 @@ begin
       else
         fmt := HeaderUnsavedFmt; {}
     end
-    // Here we go if all (P)MDI frames are closed or some other shit happened. Display AP props only
+    // Here we go if document is loading or all (P)MDI frames are closed or some shit happened. Display AP props only
     else
     begin
       fmt := HeaderAkelPropsFmt;
@@ -1656,9 +1657,18 @@ begin
     // Edit window is created
     AKDN_EDIT_ONSTART:
       SetHeaderInfo;
-    // Document is opened
+    // Document started to open - set the flag to not display doc info until it is loaded completely
+    AKDN_OPENDOCUMENT_START:
+      begin
+        Loading := True;
+        SetHeaderInfo;
+      end;
+    // Document is opened - unset the flag, we could display doc info now
     AKDN_OPENDOCUMENT_FINISH:
-      SetHeaderInfo;
+      begin
+        Loading := False;
+        SetHeaderInfo;
+      end;
     // (P)MDI tab is activated
     AKDN_FRAME_ACTIVATE:
       SetHeaderInfo;
