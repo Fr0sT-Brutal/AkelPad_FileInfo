@@ -20,6 +20,7 @@
    ---
 
  TO DO:
+   ! отображение модифицированности акелом затирает собственный заголовок
    * tooltip when report is copied to CB
    * "I did a test on this text: Text for test."
    * Commands: Open in assoc program, Show explorer menu, System props
@@ -1353,9 +1354,10 @@ begin
   // specific function init - only if hadn't already inited this function
   if not (Fn in InitedFuncs) then
   begin
-    Include(InitedFuncs, Fn);
     if Assigned(InitProc) then
       Result := InitProc(pd);
+    if not Result then Exit;
+    Include(InitedFuncs, Fn);
     FinProcs[Fn] := FinProc;
   end;
 end;

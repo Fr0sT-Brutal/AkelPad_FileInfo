@@ -3,7 +3,7 @@
 			<ProjectGuid>{6F61642E-7D98-4ADA-9341-CA24EA39F795}</ProjectGuid>
 			<MainSource>FileInfo.dpr</MainSource>
 			<Base>True</Base>
-			<Config Condition="'$(Config)'==''">Release</Config>
+			<Config Condition="'$(Config)'==''">test</Config>
 			<TargetedPlatforms>3</TargetedPlatforms>
 			<AppType>Library</AppType>
 			<FrameworkType>None</FrameworkType>
@@ -57,6 +57,17 @@
 			<Cfg_2>true</Cfg_2>
 			<Base>true</Base>
 		</PropertyGroup>
+		<PropertyGroup Condition="'$(Config)'=='test' or '$(Cfg_3)'!=''">
+			<Cfg_3>true</Cfg_3>
+			<CfgParent>Base</CfgParent>
+			<Base>true</Base>
+		</PropertyGroup>
+		<PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Cfg_3)'=='true') or '$(Cfg_3_Win32)'!=''">
+			<Cfg_3_Win32>true</Cfg_3_Win32>
+			<CfgParent>Cfg_3</CfgParent>
+			<Cfg_3>true</Cfg_3>
+			<Base>true</Base>
+		</PropertyGroup>
 		<PropertyGroup Condition="'$(Base)'!=''">
 			<DCC_Define>MiniRTL;$(DCC_Define)</DCC_Define>
 			<DCC_UnitSearchPath>#MiniRTL\XE2;#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
@@ -108,9 +119,12 @@
 			<Debugger_HostApplication>..\_AkelPad\x64\AkelPad.exe</Debugger_HostApplication>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2_Win32)'!=''">
-			<Debugger_RunParams>D:\Stuff\Download\12.12\cr3-3.1.2-27-arm-armv7a-x86-mips.apk</Debugger_RunParams>
 			<DCC_ExeOutput>..\_AkelPad\x32\AkelFiles\Plugs</DCC_ExeOutput>
 			<Debugger_HostApplication>..\_AkelPad\x32\AkelPad.exe</Debugger_HostApplication>
+		</PropertyGroup>
+		<PropertyGroup Condition="'$(Cfg_3_Win32)'!=''">
+			<DCC_ExeOutput>C:\Soft\Utils\Text\AkelPad\AkelFiles\Plugs</DCC_ExeOutput>
+			<Debugger_HostApplication>C:\Soft\Utils\Text\AkelPad\AkelPad.exe</Debugger_HostApplication>
 		</PropertyGroup>
 		<ItemGroup>
 			<DelphiCompile Include="$(MainSource)">
@@ -127,6 +141,10 @@
 			<DCCReference Include="Lang.pas"/>
 			<BuildConfiguration Include="Debug">
 				<Key>Cfg_2</Key>
+				<CfgParent>Base</CfgParent>
+			</BuildConfiguration>
+			<BuildConfiguration Include="test">
+				<Key>Cfg_3</Key>
 				<CfgParent>Base</CfgParent>
 			</BuildConfiguration>
 			<BuildConfiguration Include="Base">
@@ -174,9 +192,11 @@
 					</VersionInfoKeys>
 					<Excluded_Packages>
 						<Excluded_Packages Name="$(BDSBIN)\dclmid160.bpl">Embarcadero MyBase DataAccess Components</Excluded_Packages>
+						<Excluded_Packages Name="$(BDSBIN)\dclact160.bpl">Embarcadero ActionBar Components</Excluded_Packages>
+						<Excluded_Packages Name="$(BDS)\UserDir\Bpl\GitIDE150.bpl">(untitled)</Excluded_Packages>
+						<Excluded_Packages Name="$(BDSBIN)\svnide160.bpl">Embarcadero Subversion Integration</Excluded_Packages>
 						<Excluded_Packages Name="$(BDSBIN)\applet160.bpl">Embarcadero Control Panel Applet Package</Excluded_Packages>
 						<Excluded_Packages Name="$(BDSBIN)\dcl31w160.bpl">Delphi 1.0 Compatibility Components</Excluded_Packages>
-						<Excluded_Packages Name="$(BDSBIN)\dclact160.bpl">Embarcadero ActionBar Components</Excluded_Packages>
 						<Excluded_Packages Name="$(BDSBIN)\dclbde160.bpl">Embarcadero BDE DB Components</Excluded_Packages>
 						<Excluded_Packages Name="$(BDSBIN)\dclmlwiz160.bpl">Embarcadero Markup Language Wizards</Excluded_Packages>
 						<Excluded_Packages Name="$(BDSBIN)\dclmcn160.bpl">Embarcadero DataSnap Connection Components</Excluded_Packages>
