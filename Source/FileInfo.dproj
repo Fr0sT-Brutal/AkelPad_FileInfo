@@ -3,7 +3,7 @@
 			<ProjectGuid>{6F61642E-7D98-4ADA-9341-CA24EA39F795}</ProjectGuid>
 			<MainSource>FileInfo.dpr</MainSource>
 			<Base>True</Base>
-			<Config Condition="'$(Config)'==''">test</Config>
+			<Config Condition="'$(Config)'==''">Release</Config>
 			<TargetedPlatforms>3</TargetedPlatforms>
 			<AppType>Library</AppType>
 			<FrameworkType>None</FrameworkType>
@@ -72,7 +72,7 @@
 			<DCC_Define>MiniRTL;$(DCC_Define)</DCC_Define>
 			<DCC_UnitSearchPath>#MiniRTL\XE2;#CommonUnits;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
 			<DCC_ImageBase>00400000</DCC_ImageBase>
-			<VerInfo_Build>9</VerInfo_Build>
+			<VerInfo_Build>10</VerInfo_Build>
 			<VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
 			<VerInfo_MajorVer>0</VerInfo_MajorVer>
 			<DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Winapi;$(DCC_Namespace)</DCC_Namespace>
@@ -84,7 +84,7 @@
 			<DCC_S>false</DCC_S>
 			<DCC_F>false</DCC_F>
 			<Manifest_File>None</Manifest_File>
-			<VerInfo_Keys>CompanyName=;FileDescription=AkelPad text editor plugin;FileVersion=0.7.0.9;InternalName=FileInfo;LegalCopyright=Fr0sT;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
+			<VerInfo_Keys>CompanyName=;FileDescription=AkelPad text editor plugin;FileVersion=0.7.0.10;InternalName=FileInfo;LegalCopyright=Fr0sT;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
 			<DCC_E>false</DCC_E>
 			<VerInfo_Locale>1049</VerInfo_Locale>
 		</PropertyGroup>
@@ -101,6 +101,8 @@
 			<DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
+			<VerInfo_Build>10</VerInfo_Build>
+			<VerInfo_Keys>CompanyName=;FileDescription=AkelPad text editor plugin;FileVersion=0.7.0.10;InternalName=FileInfo;LegalCopyright=Fr0sT;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
 			<DCC_ExeOutput>..\Plugs64</DCC_ExeOutput>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">

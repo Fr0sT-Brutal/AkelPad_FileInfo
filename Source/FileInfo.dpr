@@ -144,6 +144,7 @@ type
 const // Common constants
   PluginFunctions: array[TPluginFunction] of string =
     ('Main', 'Browse', 'CopyPath', 'Rename', 'GetReport', 'HeaderInfo');
+  ResidentFunctions: TPluginFunctions = [fnHeaderInfo];
 
 const // Constants for Main function
   WordsPerCycle = 2000;  {}
@@ -1442,6 +1443,12 @@ begin
     MsgBox(LangString(idMsgShowDlgFail) + NL + LastErrMsg, iStop);
   // Cleanup
   CommonFinish(fnMain);
+
+  // If resident function is active then leave plugin in memory and show as not active
+  // Otherwise, unload plugin
+  if InitedFuncs*ResidentFunctions <> []
+    then pd.nUnload := UD_NONUNLOAD_NONACTIVE
+    else pd.nUnload := UD_UNLOAD;
 end;
 
 {$ENDREGION}
@@ -1467,6 +1474,12 @@ begin
   DoBrowse;
   // Cleanup
   CommonFinish(fnBrowse);
+
+  // If resident function is active then leave plugin in memory and show as not active
+  // Otherwise, unload plugin
+  if InitedFuncs*ResidentFunctions <> []
+    then pd.nUnload := UD_NONUNLOAD_NONACTIVE
+    else pd.nUnload := UD_UNLOAD;
 end;
 
 {$ENDREGION}
@@ -1588,6 +1601,12 @@ begin
   DoRename('');
   // Cleanup
   CommonFinish(fnRename);
+
+  // If resident function is active then leave plugin in memory and show as not active
+  // Otherwise, unload plugin
+  if InitedFuncs*ResidentFunctions <> []
+    then pd.nUnload := UD_NONUNLOAD_NONACTIVE
+    else pd.nUnload := UD_UNLOAD;
 end;
 
 {$ENDREGION}
@@ -1646,6 +1665,8 @@ end;
 
 // Hook proc that catches main Akel window messages
 function HeaderInfoSubcl(hWnd: HWND; uMsg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
+var
+  NextProc: TWndProc;
 begin
 //OutputDebugString(pchar(IntToStr(uMsg)));
 
@@ -1676,6 +1697,18 @@ begin
       SetHeaderInfo;
     AKDN_FRAME_NOWINDOWS:
       SetHeaderInfo;
+    // AkelPad is being closed, unhook main proc
+    AKDN_MAIN_ONFINISH:
+      begin
+        if (pwpd <> nil) and Assigned(pwpd.NextProc)
+          then NextProc := pwpd.NextProc
+          else NextProc := nil;
+        CommonFinish(fnHeaderInfo);
+        if Assigned(NextProc)
+          then Result := NextProc(hWnd, uMsg, wParam, lParam)
+          else Result := 0;
+        Exit;
+      end;
   end;
 
   if (pwpd <> nil) and Assigned(pwpd.NextProc) then
