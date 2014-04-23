@@ -53,8 +53,8 @@ uses
   Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
   IceUtils,
   ResDialog,
-  AkelDLL_h in '#AkelDefs\AkelDLL_h.pas',
-  AkelEdit_h in '#AkelDefs\AkelEdit_h.pas',
+  AkelDLL in '#AkelDefs\AkelDLL.pas',
+  AkelEdit in '#AkelDefs\AkelEdit.pas',
   Lang in 'Lang.pas';
 
 // Global constants
@@ -1769,7 +1769,7 @@ end;
 // Identification
 procedure DllAkelPadID(var pv: TPLUGINVERSION); cdecl;
 begin
-  pv.dwAkelDllVersion := AkelDLL;
+  pv.dwAkelDllVersion := AkelDLLVer;
   pv.dwExeMinVersion3x := MakeIdentifier(-1, -1, -1, -1);
   pv.dwExeMinVersion4x := MakeIdentifier(4, 7, 0, 0);
   pv.pPluginName := PAnsiChar(PluginName);

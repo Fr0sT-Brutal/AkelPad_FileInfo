@@ -8,7 +8,7 @@
 			<AppType>Library</AppType>
 			<FrameworkType>None</FrameworkType>
 			<ProjectVersion>13.4</ProjectVersion>
-			<Platform Condition="'$(Platform)'==''">Win32</Platform>
+			<Platform Condition="'$(Platform)'==''">Win64</Platform>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
 			<Base>true</Base>
@@ -138,8 +138,8 @@
 			<RcCompile Include="MainIcon.rc">
 				<Form>MainIcon.res</Form>
 			</RcCompile>
-			<DCCReference Include="#AkelDefs\AkelDLL_h.pas"/>
-			<DCCReference Include="#AkelDefs\AkelEdit_h.pas"/>
+			<DCCReference Include="#AkelDefs\AkelDLL.pas"/>
+			<DCCReference Include="#AkelDefs\AkelEdit.pas"/>
 			<DCCReference Include="Lang.pas"/>
 			<BuildConfiguration Include="Debug">
 				<Key>Cfg_2</Key>
