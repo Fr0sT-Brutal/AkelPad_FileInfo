@@ -50,9 +50,9 @@ library FileInfo;
 {$R *.RES}
 
 uses
-  Windows, Messages, SysUtils, Character, CommCtrl, ShellApi,
-  IceUtils,
-  ResDialog,
+  Winapi.Windows, Winapi.Messages, PseudoRTL.Character, PseudoRTL.SysUtils,
+  Winapi.CommCtrl, Winapi.ShellApi,
+  IceUtils, PathUtils, ResDialog,
   AkelDLL in '#AkelDefs\AkelDLL.pas',
   AkelEdit in '#AkelDefs\AkelEdit.pas',
   Lang in 'Lang.pas';
@@ -94,7 +94,7 @@ type
     FileName: string;          // Full file path
     FileSize: Int64;
     Created,
-    Modified: TDateTime;
+    Modified: TSystemTime;
     hIcon: HICON;              // Shell icon handle
     // general document info
     CodePage: Integer;         //
@@ -269,16 +269,10 @@ function GetFileInfo(const AkelData: TAkelData; var FileStats: TFileStats): Bool
 var ei: TEDITINFO;
     crInit: TAECHARRANGE;
 begin
-  // clear file info fields
+  // clear file info fields except counters
   DestroyIcon(FileStats.hIcon);
-  FileStats.FileName := '';
-  FileStats.FileSize := 0;
-  FileStats.Created := 0;
-  FileStats.Modified := 0;
-  FileStats.hIcon := 0;
-  FileStats.CodePage := 0;
-  FileStats.Selection := False;
-  FileStats.IsModified := False;
+  Finalize(FileStats);
+  ZeroMem(FileStats, PByte(@FileStats.Counters) - PByte(@FileStats));
 
   ZeroMem(ei, SizeOf(ei));
   if (AkelData.hMainWnd = 0) or
@@ -574,7 +568,7 @@ begin
         if TCharacter.IsWhiteSpace(CurrChar) then
           Inc(CountProgress.Counters.WhiteSpaces)
         else
-        if CharInSet(CurrChar, ['A'..'Z', 'a'..'z']) then
+        if TCharacter.IsLatin1(CurrChar) and TCharacter.IsLetter(CurrChar) then
           Inc(CountProgress.Counters.Latin)
         else
         if TCharacter.IsLetter(CurrChar) then
@@ -665,9 +659,9 @@ var
 begin
   case param of
     cppAll       : s := FileStats.FileName;
-    cppName      : s := ExtractFileName(FileStats.FileName);
-    cppNameNoExt : s := ChangeFileExt(ExtractFileName(FileStats.FileName), '');
-    cppPath      : s := ExtractFilePath(FileStats.FileName);
+    cppName      : s := ExtractNameExtL(FileStats.FileName);
+    cppNameNoExt : s := ExtractNameL(FileStats.FileName);
+    cppPath      : s := ExtractPathL(FileStats.FileName);
   end;
 
   CopyTextToCB(s, AkelData.hMainWnd);
@@ -684,7 +678,7 @@ class procedure THandler.InputBoxDialogProc(Sender: TResDialog; const Msg: TMsg;
 var
   Fn: string;
   pPoint, pFn: PChar;
-  PointPos: Integer;
+  ExtPos: Integer;
   hEdit: HWND;
 begin
   case Msg.message of
@@ -693,14 +687,10 @@ begin
     RDM_DLGOPENING:
       begin
         Fn := Sender.ItemText[IDC_EDT_NEWNAME];
-        pFn := PChar(Fn);
-        pPoint := StrRScan(pFn, '.');
-        if pPoint = nil
-          then PointPos := Length(Fn)
-          else PointPos := pPoint - pFn;
+        ExtPos := Length(Fn) - Length(ExtractExtL(Fn));
         hEdit := Sender.Item[IDC_EDT_NEWNAME];
         SetFocus(hEdit);
-        SendMessage(hEdit, EM_SETSEL, 0, PointPos);
+        SendMessage(hEdit, EM_SETSEL, 0, ExtPos);
         Res := LRESULT(False); // ! return False in response to WM_INITDIALOG prevents system
                                // from default focusing (there's no other way to control selection
                                // in the edit)
@@ -735,7 +725,7 @@ begin
     InputBox := TResDialog.Create(IDD_DLG_INPUTBOX, hwndParent);
     InputBox.Caption := LangString(idInputBoxCaption);
     InputBox.SetItemData([ItemData(IDC_STC_INPUT_LABEL,  LangString(idInputBoxLabel)),
-                          ItemData(IDC_EDT_NEWNAME,      ExtractFileName(FileStats.FileName)),
+                          ItemData(IDC_EDT_NEWNAME,      ExtractNameExtL(FileStats.FileName)),
                           ItemData(IDC_BTN_INPUT_OK,     LangString(idInputBoxBtnOK)),
                           ItemData(IDC_BTN_INPUT_CANCEL, LangString(idInputBoxBtnCancel))]);
     InputBox.OnDialogProc := THandler.InputBoxDialogProc;
@@ -746,7 +736,7 @@ begin
   end;
 
   // check the new file name
-  NewFullName := ExtractFilePath(FileStats.FileName) + ExtractFileName(NewName); // strip the path from NewName
+  NewFullName := ExtractPathL(FileStats.FileName) + ExtractNameExtL(NewName); // strip the path from NewName
   if NewFullName = FileStats.FileName then Exit; // dest = source
   if FileExists(NewFullName) then
   begin
@@ -817,10 +807,10 @@ begin
 
   if FileStats.FileName <> '' then
     FileProps :=
-      Format(ReportPattProp, [LangString(idPgFileLabelPath),     ExtractFilePath(FileStats.FileName)]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelPath),     ExtractPathL(FileStats.FileName)]) +
       Format(ReportPattProp, [LangString(idPgFileLabelSize),     IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '')]) +
-      Format(ReportPattProp, [LangString(idPgFileLabelCreated),  IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '')]) +
-      Format(ReportPattProp, [LangString(idPgFileLabelModified), IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '')]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelCreated),  IfTh(FileStats.Created.wYear <> 0,  SystemTimeToStr(FileStats.Created), '')]) +
+      Format(ReportPattProp, [LangString(idPgFileLabelModified), IfTh(FileStats.Modified.wYear <> 0, SystemTimeToStr(FileStats.Modified), '')]) +
       IfTh(FileStats.IsModified, '(!) ' + LangString(idPgFileLabelErrNotAFile))
   else
     FileProps := '(Not a file)';
@@ -839,7 +829,7 @@ begin
       '';
 
   Total := Format(ReportPattAll,
-                  [IfTh(FileStats.FileName = '', '(!) ' + LangString(idPgFileLabelErrNotAFile), ExtractFileName(FileStats.FileName)),
+                  [IfTh(FileStats.FileName = '', '(!) ' + LangString(idPgFileLabelErrNotAFile), ExtractNameExtL(FileStats.FileName)),
                    FileProps, DocProps]);
 
   CopyTextToCB(Total);
@@ -1023,7 +1013,7 @@ begin
     // dialog created and is going to be shown
     RDM_DLGOPENING:
       begin
-        SendMessage(DlgWnd, WM_SETICON, ICON_SMALL, Windows.LPARAM(FAppIcon));
+        SendMessage(DlgWnd, WM_SETICON, ICON_SMALL, LPARAM(FAppIcon));
         Caption := IfTh(FileStats.Selection, LangString(idTitleSelProps), LangString(idTitleFileProps));
         hwndTab := Item[IDC_TAB];
         // init tabs
@@ -1033,7 +1023,7 @@ begin
           ZeroMem(tabItem, SizeOf(tabItem));
           tabItem.mask := TCIF_TEXT;
           tabItem.pszText := PChar(FTabPageCaptions[pg]);
-          SendMessage(hwndTab, TCM_INSERTITEM, Integer(pg), Windows.LPARAM(@tabItem));
+          SendMessage(hwndTab, TCM_INSERTITEM, WPARAM(pg), LPARAM(@tabItem));
           // parent window handle changes every time so set the actual one
           FPages[pg].Parent := hwndTab;
         end;
@@ -1178,7 +1168,7 @@ end;
 // set text values form FileStats record
 procedure TPageDlg.SetValues(Forced: Boolean);
 var CPInfo: TCPInfoEx;
-    hdc: Windows.HDC;
+    hdc: Winapi.Windows.HDC;
     Size: TSize;
     Rect: TRect;
     Path: string;
@@ -1196,12 +1186,12 @@ begin
       begin
         if not FValuesWereSet or Forced then // some values might change (during count process) and some might not
         begin
-          Path := ExtractFilePath(FileStats.FileName);
-          ItemText[IDC_EDT_FILENAME] := ExtractFileName(FileStats.FileName);
+          Path := ExtractPathL(FileStats.FileName);
+          ItemText[IDC_EDT_FILENAME] := ExtractNameExtL(FileStats.FileName);
           ItemText[IDC_EDT_FILEPATH] := Path;
           ItemText[IDC_EDT_FILESIZE] := IfTh(FileStats.FileSize <> 0, Format(LangString(idPgFileTextSizePatt), [ThousandsDivide(FileStats.FileSize)]), '');
-          ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created <> 0,  DateTimeToStr(FileStats.Created), '');
-          ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified <> 0, DateTimeToStr(FileStats.Modified), '');
+          ItemText[IDC_EDT_CREATED]  := IfTh(FileStats.Created.wYear <> 0,  SystemTimeToStr(FileStats.Created), '');
+          ItemText[IDC_EDT_MODIFIED] := IfTh(FileStats.Modified.wYear <> 0, SystemTimeToStr(FileStats.Modified), '');
           SendMessage(Item[IDC_EDT_FILENAME], EM_SETMODIFY, WPARAM(False), 0);
           SendMessage(Item[IDC_EDT_FILENAME], EM_SETREADONLY, WPARAM(FileStats.FileName = ''), 0);
           // check if path is longer than "FilePath" edit width and set tooltip if yes
@@ -1281,7 +1271,7 @@ begin
         // calculate tab's client area
         hwndTab := Parent;
         GetClientRect(hwndTab, TabClientArea);
-        SendMessage(hwndTab, TCM_ADJUSTRECT, Windows.WPARAM(False), Windows.LPARAM(@TabClientArea));
+        SendMessage(hwndTab, TCM_ADJUSTRECT, WPARAM(False), LPARAM(@TabClientArea));
         Dec(TabClientArea.Left, 2); // ! TCM_ADJUSTRECT leaves 2 excess pixels on the left so remove it
         SetWindowPos(DlgWnd, 0, TabClientArea.Left, TabClientArea.Top,
                      TabClientArea.Right - TabClientArea.Left, TabClientArea.Bottom - TabClientArea.Top,
@@ -1623,7 +1613,7 @@ begin
   ZeroMem(ei, SizeOf(ei));
   if AkelData.hMainWnd <> 0 then
   begin
-    if not Loading and (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, Windows.LPARAM(@ei)) <> 0) then
+    if not Loading and (SendMessage(AkelData.hMainWnd, AKD_GETEDITINFO, 0, LPARAM(@ei)) <> 0) then
     begin
       if ei.wszFile <> nil then
         FileName := string(ei.wszFile)
@@ -1649,11 +1639,11 @@ begin
                        begin
                          Result := True;
                          case FindStr(Token, HeaderTokens) of
-                           0: Token := ExtractFileName(FileName);
+                           0: Token := ExtractNameExtL(FileName);
                            1: Token := IfTh(ei.bModified, Modif);
                            2: Token := Platf;
                            3: Token := AkelVer;
-                           4: Token := ExcludeTrailingBackslash(ExtractFilePath(FileName));
+                           4: Token := ExtractPathL(FileName);
                            5: Token := LangString(idUnsaved);
                            else
                              Result := False;
