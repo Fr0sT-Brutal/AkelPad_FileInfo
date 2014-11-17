@@ -2,7 +2,8 @@ unit IceUtils;
 
 interface
 
-uses SysUtils, StrUtils, Windows, Messages;
+uses
+  Winapi.Windows, Winapi.Messages, PseudoRTL.SysUtils;
 
 type
   TTimeScale = (tsSys, tsLoc); // шкала времени для FileTime функций: локальная/UTC
@@ -12,6 +13,7 @@ type
 const
   NL = #13#10;
   VersionFmt = '%d.%d.%d.%d';
+  DateTimeFmt = '%.2d.%.2d.%.4d %.2d:%.2d';
 
   function IfTh(AValue: Boolean; const ATrue: string; const AFalse: string = ''): string; overload; inline;
   function IfTh(AValue: Boolean; const ATrue: Integer; const AFalse: Integer = 0): Integer; overload; inline;
@@ -19,11 +21,11 @@ const
   function IfTh(AValue: Boolean; const ATrue: Pointer; const AFalse: Pointer = nil): Pointer; overload; inline;
   function IfTh(AValue: Boolean; const ATrue: Double; const AFalse: Double = 0): Double; overload; inline;
   // filesystem
-  function GetFileTime(FileName: string; Scale: TTimeScale; pCreation, pLastAccess, pLastWrite: PDateTime): Boolean;
-  function SetFileTime(FileName: string; Scale: TTimeScale; Creation, LastAccess, LastWrite: TDateTime): Boolean;
+  function GetFileTime(FileName: string; Scale: TTimeScale; pCreation, pLastAccess, pLastWrite: PSystemTime): Boolean;
   function GetFileSize(FileName: string): Int64;
   function GetFileVersion(const Path: string): TFileVersion;
   function FormatFileVersion(const FileVer: TFileVersion; VerFmt: string = VersionFmt): string;
+  function SystemTimeToStr(aTime: TSystemTime): string;
   // strings
   function ThousandsDivide(num: Integer): string; overload; inline;
   function ThousandsDivide(num: Int64): string; overload; inline;
@@ -34,7 +36,7 @@ const
   procedure ZeroMem(var Dest; count: Integer); inline;
   // classes and stuff
   procedure CloseAndZeroHandle(var Handle: THandle); inline;
-  function LastErrMsg: string; inline;
+  function LastErrMsg: string;
   function CopyTextToCB(const Text: string; hWnd: HWND = 0): Boolean;
 
 implementation
@@ -78,51 +80,29 @@ begin
   Result := Format(VerFmt, [FileVer[1], FileVer[2], FileVer[3], FileVer[4]]);
 end;
 
-// ********* Временные метки файлов ********* \\
-
-// преобразования DateTime <-> TFileTime, используемый виндой
-function DateTimeToFileTime(Scale: TTimeScale; aDate: TDateTime): TFileTime;
-var st: TSystemTime;
+function SystemTimeToStr(aTime: TSystemTime): string;
 begin
-  DateTimeToSystemTime(aDate, st);
-  SystemTimeToFileTime(st, Result);
-  if Scale = tsLoc then LocalFileTimeToFileTime(Result, Result);
+  Result := Format(DateTimeFmt,
+    [aTime.wDay, aTime.wMonth, aTime.wYear, aTime.wHour, aTime.wMonth]);
 end;
 
-function FileTimeToDateTime(Scale: TTimeScale; aTime: TFileTime): TDateTime;
-var st: TSystemTime;
+// получение временных меток файла в структуры PSystemTime
+function GetFileTime(FileName: string; Scale: TTimeScale; pCreation, pLastAccess, pLastWrite: PSystemTime): Boolean;
+
+procedure SetSysTime(FileTime: TFileTime; Scale: TTimeScale; pST: PSystemTime); inline;
 begin
-  if Scale = tsLoc then FileTimeToLocalFileTime(aTime, aTime);
-  FileTimeToSystemTime(aTime, st);
-  Result := SystemTimeToDateTime(st);
+  if pST = nil then Exit;
+  if Scale = tsLoc then FileTimeToLocalFileTime(FileTime, FileTime);
+  FileTimeToSystemTime(FileTime, pST^);
 end;
 
-// получение временной метки файла в удобном виде
-function GetFileTime(FileName: string; Scale: TTimeScale; pCreation, pLastAccess, pLastWrite: PDateTime): Boolean;
 var attr: WIN32_FILE_ATTRIBUTE_DATA;
 begin
   Result := GetFileAttributesEx(PChar(FileName), GetFileExInfoStandard, @attr);
   if not Result then Exit;
-  if pCreation   <> nil then pCreation^   := FileTimeToDateTime(Scale, attr.ftCreationTime);
-  if pLastWrite  <> nil then pLastWrite^  := FileTimeToDateTime(Scale, attr.ftLastWriteTime);
-  if pLastAccess <> nil then pLastAccess^ := FileTimeToDateTime(Scale, attr.ftLastAccessTime);
-end;
-
-// присвоение временных меток файлу, для ненужных полей передавать 0 в параметре
-function SetFileTime(FileName: string; Scale: TTimeScale; Creation, LastAccess, LastWrite: TDateTime): Boolean;
-var f: Integer;
-    Cr, Acc, Wr: TFileTime;
-begin
-  f := FileOpen(FileName, fmOpenWrite or fmShareDenyNone);
-  Result := f <> -1;
-  if not Result then Exit;
-  if Creation   <> 0 then Cr := DateTimeToFileTime(Scale, Creation);
-  if LastWrite  <> 0 then Wr := DateTimeToFileTime(Scale, LastWrite);
-  if LastAccess <> 0 then Acc := DateTimeToFileTime(Scale, LastAccess);
-  Result := Windows.SetFileTime(f, IfTh(Creation   <> 0, @Cr, nil),
-                                   IfTh(LastWrite  <> 0, @Wr, nil),
-                                   IfTh(LastAccess <> 0, @Acc, nil));
-  FileClose(f);
+  SetSysTime(attr.ftCreationTime  , Scale, pCreation  );
+  SetSysTime(attr.ftLastWriteTime , Scale, pLastWrite );
+  SetSysTime(attr.ftLastAccessTime, Scale, pLastAccess);
 end;
 
 // ********* костыли тернарного оператора ********* \\
@@ -165,6 +145,39 @@ begin
   Result := Format('%.0n', [num+0.0]);
 end;
 
+// Аналог PosEx, сделан, чтобы не подключать StrUtils
+function PosOfs(const SubStr, Str: string; Offset: Integer): Integer;
+var
+  SubLen, SrcLen, Len, I, J: Integer;
+  C1: Char;
+begin
+  Result := 0;
+  if (Pointer(SubStr) = nil) or (Pointer(Str) = nil) then Exit;
+  SrcLen := Length(Str);
+  SubLen := Length(SubStr);
+  if (SubLen <= 0) or (SrcLen <= 0) or (SrcLen < SubLen) or (Offset <= 0) then Exit;
+  // find SubStr[1] in S[1 .. SrcLen - SubLen + 1]
+  Len := SrcLen - SubLen + 1;
+  C1 := PChar(SubStr)[0];
+  for I := Offset - 1 to Len - 1 do
+  begin
+    if PChar(Str)[I] = C1 then
+    begin
+      Result := I + 1;
+      for J := 1 to SubLen - 1 do
+      begin
+        if PChar(Str)[I+J] <> PChar(SubStr)[J] then
+        begin
+          Result := 0;
+          Break;
+        end;
+      end;
+      if Result <> 0 then
+        Break;
+    end;
+  end;
+end;
+
 // Находит все вхождения строк между символами TokenStart и TokenEnd в строке Patt
 // и заменяет их на результат выполнения функции Callback
 // Флаг EatUnmatched определяет, удалять ли вхождения, для которых Callback
@@ -179,9 +192,9 @@ begin
   while curr <= Length(Patt) do
   begin
     // выделяем токен (символы, обрамлённые TokenStart и TokenEnd)
-    pos_beg := PosEx(TokenStart, Patt, curr);
+    pos_beg := PosOfs(TokenStart, Patt, curr);
     if pos_beg = 0 then Break;
-    pos_end := PosEx(TokenEnd, Patt, pos_beg+1);
+    pos_end := PosOfs(TokenEnd, Patt, pos_beg+1);
     if pos_end = 0 then Break;
     token := Copy(patt, pos_beg+1, pos_end-pos_beg-1);
     // вызываем callback функцию и действуем по её результатам
