@@ -7,7 +7,7 @@ unit Lang;
 
 interface
 
-uses Windows;
+uses Winapi.Windows;
 
 // String IDs
 type
